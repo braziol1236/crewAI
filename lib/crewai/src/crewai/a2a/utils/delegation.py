@@ -589,8 +589,9 @@ async def _aexecute_a2a_delegation_impl(
 
     # If the user hasn't explicitly configured an updates strategy and the remote
     # agent advertises that it does not support streaming, fall back to polling.
-    if updates is None and not (
-        agent_card.capabilities and agent_card.capabilities.streaming
+    if updates is None and (
+        agent_card.capabilities is not None
+        and agent_card.capabilities.streaming is False
     ):
         logger.debug(
             "Remote agent does not support streaming; falling back to PollingHandler",

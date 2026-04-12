@@ -156,6 +156,25 @@ class TestStreamingFallback:
         mock_polling.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_uses_streaming_when_agent_card_streaming_is_none(self) -> None:
+        """When streaming is unset (None) and updates is None, StreamingHandler should be used."""
+        agent_card = _make_agent_card(streaming=None)
+
+        with ExitStack() as stack:
+            for p in _make_shared_patches(agent_card):
+                stack.enter_context(p)
+            mock_polling = stack.enter_context(
+                patch.object(PollingHandler, "execute", new=AsyncMock(return_value=_TASK_RESULT))
+            )
+            mock_streaming = stack.enter_context(
+                patch.object(StreamingHandler, "execute", new=AsyncMock(return_value=_TASK_RESULT))
+            )
+            await _call_impl(agent_card, updates=None)
+
+        mock_streaming.assert_called_once()
+        mock_polling.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_explicit_streaming_config_overrides_agent_card(self) -> None:
         """Explicitly passing StreamingConfig keeps StreamingHandler even when agent card says no streaming."""
         from crewai.a2a.updates.streaming.config import StreamingConfig
