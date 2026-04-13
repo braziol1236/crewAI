@@ -44,6 +44,7 @@ from crewai.llms.constants import (
     BEDROCK_MODELS,
     GEMINI_MODELS,
     OPENAI_MODELS,
+    WATSONX_MODELS,
 )
 from crewai.utilities import InternalInstructor
 from crewai.utilities.exceptions.context_window_exceeding_exception import (
@@ -309,6 +310,8 @@ SUPPORTED_NATIVE_PROVIDERS: Final[list[str]] = [
     "gemini",
     "bedrock",
     "aws",
+    "watsonx",
+    "ibm",
     # OpenAI-compatible providers
     "openrouter",
     "deepseek",
@@ -376,6 +379,8 @@ class LLM(BaseLLM):
                 "gemini": "gemini",
                 "bedrock": "bedrock",
                 "aws": "bedrock",
+                "watsonx": "watsonx",
+                "ibm": "watsonx",
                 # OpenAI-compatible providers
                 "openrouter": "openrouter",
                 "deepseek": "deepseek",
@@ -506,6 +511,12 @@ class LLM(BaseLLM):
             # OpenRouter uses org/model format but accepts anything
             return True
 
+        if provider == "watsonx" or provider == "ibm":
+            return any(
+                model_lower.startswith(prefix)
+                for prefix in ["ibm/granite", "granite"]
+            )
+
         return False
 
     @classmethod
@@ -541,6 +552,9 @@ class LLM(BaseLLM):
             # azure does not provide a list of available models, determine a better way to handle this
             return True
 
+        if (provider == "watsonx" or provider == "ibm") and model in WATSONX_MODELS:
+            return True
+
         # Fallback to pattern matching for models not in constants
         return cls._matches_provider_pattern(model, provider)
 
@@ -573,6 +587,9 @@ class LLM(BaseLLM):
         if model in AZURE_MODELS:
             return "azure"
 
+        if model in WATSONX_MODELS:
+            return "watsonx"
+
         return "openai"
 
     @classmethod
@@ -604,6 +621,11 @@ class LLM(BaseLLM):
             from crewai.llms.providers.bedrock.completion import BedrockCompletion
 
             return BedrockCompletion
+
+        if provider == "watsonx" or provider == "ibm":
+            from crewai.llms.providers.watsonx.completion import WatsonxCompletion
+
+            return WatsonxCompletion
 
         # OpenAI-compatible providers
         openai_compatible_providers = {
