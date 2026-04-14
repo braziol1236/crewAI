@@ -1099,7 +1099,9 @@ ALLOWED_TOOL_MODULE_PREFIXES: Final[tuple[str, ...]] = (
 
 def _is_trusted_tool_module(module_path: str) -> bool:
     """Return True if *module_path* is within the trusted tool allowlist."""
-    return any(module_path.startswith(prefix) for prefix in ALLOWED_TOOL_MODULE_PREFIXES)
+    return any(
+        module_path.startswith(prefix) for prefix in ALLOWED_TOOL_MODULE_PREFIXES
+    )
 
 
 def load_agent_from_repository(from_repository: str) -> dict[str, Any]:
