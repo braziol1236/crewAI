@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import BaseModel, Field
 
+import crewai.utilities.agent_utils as _agent_utils_mod
 from crewai.tools.base_tool import BaseTool
 from crewai.utilities.agent_utils import (
     ALLOWED_TOOL_MODULE_PREFIXES,
@@ -1223,7 +1224,6 @@ class TestLoadAgentFromRepositoryModuleValidation:
 
     def test_accepts_trusted_crewai_tools_module(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A tool from 'crewai_tools.*' that is a BaseTool subclass should load fine."""
-        import crewai.utilities.agent_utils as _mod
 
         class FakeTool(BaseTool):
             name: str = "fake"
@@ -1235,12 +1235,12 @@ class TestLoadAgentFromRepositoryModuleValidation:
         fake_module = MagicMock()
         fake_module.FakeTool = FakeTool
 
-        monkeypatch.setattr(_mod, "_print_current_organization", lambda: None)
+        monkeypatch.setattr(_agent_utils_mod, "_print_current_organization", lambda: None)
         monkeypatch.setattr(
-            _mod, "_create_plus_client_hook", lambda: MagicMock()
+            _agent_utils_mod, "_create_plus_client_hook", MagicMock
         )
         monkeypatch.setattr(
-            _mod.asyncio, "run",
+            _agent_utils_mod.asyncio, "run",
             lambda _coro: self._make_mock_response(
                 {
                     "role": "Helper",
@@ -1257,7 +1257,7 @@ class TestLoadAgentFromRepositoryModuleValidation:
             ),
         )
         monkeypatch.setattr(
-            _mod.importlib, "import_module", lambda _name: fake_module
+            _agent_utils_mod.importlib, "import_module", lambda _name: fake_module
         )
 
         result = load_agent_from_repository("my-agent")

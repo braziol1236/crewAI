@@ -1173,7 +1173,9 @@ def load_agent_from_repository(from_repository: str) -> dict[str, Any]:
                         else:
                             attributes[key].append(tool_value)
 
-                    except Exception as e:  # noqa: PERF203
+                    except AgentRepositoryError:  # noqa: PERF203
+                        raise
+                    except Exception as e:
                         raise AgentRepositoryError(
                             f"Tool {tool['name']} could not be loaded: {e}"
                         ) from e
