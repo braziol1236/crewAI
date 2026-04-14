@@ -7,7 +7,6 @@ import uuid
 from typing_extensions import Self
 
 from crewai.cli.authentication.token import AuthError, get_auth_token
-from crewai.cli.version import get_crewai_version
 from crewai.events.base_event_listener import BaseEventListener
 from crewai.events.base_events import BaseEvent
 from crewai.events.event_bus import CrewAIEventsBus
@@ -17,7 +16,10 @@ from crewai.events.listeners.tracing.first_time_trace_handler import (
 from crewai.events.listeners.tracing.trace_batch_manager import TraceBatchManager
 from crewai.events.listeners.tracing.types import TraceEvent
 from crewai.events.listeners.tracing.utils import (
+    is_tracing_enabled_in_context,
     safe_serialize_to_dict,
+    should_auto_collect_first_time_traces,
+    should_enable_tracing,
 )
 from crewai.events.types.a2a_events import (
     A2AAgentCardFetchedEvent,
@@ -124,6 +126,7 @@ from crewai.events.types.tool_usage_events import (
     ToolUsageStartedEvent,
 )
 from crewai.events.utils.console_formatter import ConsoleFormatter
+from crewai.utilities.version import get_crewai_version
 
 
 _TRACE_CONTEXT: dict[str, bool] = {"trace": True}
@@ -191,6 +194,17 @@ class TraceCollectionListener(BaseEventListener):
             crewai_event_bus: The event bus to register listeners on.
         """
         if self._listeners_setup:
+            return
+
+        # Skip registration entirely if tracing is disabled and not first-time user
+        # This avoids overhead of 50+ handler registrations when tracing won't be used
+        # Also check is_tracing_enabled_in_context() so per-run overrides (Crew(tracing=True)) still work
+        if (
+            not should_enable_tracing()
+            and not is_tracing_enabled_in_context()
+            and not should_auto_collect_first_time_traces()
+        ):
+            self._listeners_setup = True
             return
 
         self._register_env_event_handlers(crewai_event_bus)
