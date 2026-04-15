@@ -19,6 +19,7 @@ from collections.abc import Callable
 from copy import deepcopy
 import datetime
 import logging
+import threading
 from typing import TYPE_CHECKING, Annotated, Any, Final, Literal, TypedDict, Union, cast
 import uuid
 
@@ -666,10 +667,21 @@ def build_rich_field_description(prop_schema: dict[str, Any]) -> str:
     return ". ".join(parts) if parts else ""
 
 
-# Thread-local set tracking which schemas are currently being converted to
-# Pydantic models.  Used by ``_json_schema_to_pydantic_type`` to detect
-# circular ``$ref`` chains and break the recursion with a ``dict`` fallback.
-_resolving_refs: set[str] = set()
+# Thread-local storage tracking which ``$ref`` paths are currently being
+# resolved.  Used by ``_json_schema_to_pydantic_type`` to detect circular
+# ``$ref`` chains and break the recursion with a ``dict`` fallback.
+# Each thread gets its own independent set so concurrent schema conversions
+# (e.g. via ThreadPoolExecutor in MCP tool resolution) don't interfere.
+_resolving_refs_local = threading.local()
+
+
+def _get_resolving_refs() -> set[str]:
+    """Return the per-thread resolving-refs set, creating it on first access."""
+    try:
+        return _resolving_refs_local.refs  # type: ignore[no-any-return]
+    except AttributeError:
+        _resolving_refs_local.refs = set()  # type: ignore[attr-defined]
+        return _resolving_refs_local.refs  # type: ignore[no-any-return]
 
 
 def _safe_replace_refs(json_schema: dict[str, Any]) -> dict[str, Any]:
@@ -1021,9 +1033,10 @@ def _json_schema_to_pydantic_type(
     if ref:
         # Detect circular $ref chains - if we are already resolving this
         # ref higher up the call stack, break the cycle by returning dict.
-        if ref in _resolving_refs:
+        resolving = _get_resolving_refs()
+        if ref in resolving:
             return dict
-        _resolving_refs.add(ref)
+        resolving.add(ref)
         try:
             ref_schema = _resolve_ref(ref, root_schema)
             return _json_schema_to_pydantic_type(
@@ -1033,7 +1046,7 @@ def _json_schema_to_pydantic_type(
                 enrich_descriptions=enrich_descriptions,
             )
         finally:
-            _resolving_refs.discard(ref)
+            resolving.discard(ref)
 
     enum_values = json_schema.get("enum")
     if enum_values:
