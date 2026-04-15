@@ -118,8 +118,12 @@ class AzureCompletion(BaseLLM):
         data["api_version"] = (
             data.get("api_version") or os.getenv("AZURE_API_VERSION") or "2024-06-01"
         )
-        data["azure_tenant_id"] = data.get("azure_tenant_id") or os.getenv("AZURE_TENANT_ID")
-        data["azure_client_id"] = data.get("azure_client_id") or os.getenv("AZURE_CLIENT_ID")
+        data["azure_tenant_id"] = data.get("azure_tenant_id") or os.getenv(
+            "AZURE_TENANT_ID"
+        )
+        data["azure_client_id"] = data.get("azure_client_id") or os.getenv(
+            "AZURE_CLIENT_ID"
+        )
 
         # Credentials and endpoint are validated lazily in `_init_clients`
         # so the LLM can be constructed before deployment env vars are set.
@@ -154,7 +158,7 @@ class AzureCompletion(BaseLLM):
         try:
             self._client = self._build_sync_client()
             self._async_client = self._build_async_client()
-        except ValueError:
+        except (ValueError, ImportError):
             pass
         return self
 

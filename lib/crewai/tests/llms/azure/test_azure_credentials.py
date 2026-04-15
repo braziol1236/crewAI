@@ -7,7 +7,6 @@ Covers the four credential paths:
 4. AzureKeyCredential (API key - existing path)
 """
 
-import os
 from unittest.mock import patch, MagicMock
 
 import pytest
