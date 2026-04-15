@@ -193,6 +193,13 @@ class Task(BaseModel):
         description="A converter class used to export structured output",
         default=None,
     )
+    constraints: list[str] = Field(
+        default_factory=list,
+        description="Structured constraints that must be preserved during task delegation. "
+        "Each constraint is a string describing a specific requirement (e.g., domain scope, "
+        "quality specs, temporal or geographic limits). These are automatically propagated "
+        "to delegated tasks so worker agents are aware of all original constraints.",
+    )
     processed_by_agents: set[str] = Field(default_factory=set)
     guardrail: GuardrailType | None = Field(
         default=None,
@@ -901,10 +908,16 @@ class Task(BaseModel):
 
         tasks_slices = [description]
 
+        if self.constraints:
+            constraints_text = "\n\nTask Constraints (MUST be respected):\n" + "\n".join(
+                f"- {constraint}" for constraint in self.constraints
+            )
+            tasks_slices.append(constraints_text)
+
         output = I18N_DEFAULT.slice("expected_output").format(
             expected_output=self.expected_output
         )
-        tasks_slices = [description, output]
+        tasks_slices.append(output)
 
         if self.markdown:
             markdown_instruction = """Your final answer MUST be formatted in Markdown syntax.

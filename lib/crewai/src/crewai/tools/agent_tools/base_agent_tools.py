@@ -16,6 +16,7 @@ class BaseAgentTool(BaseTool):
     """Base class for agent-related tools"""
 
     agents: list[BaseAgent] = Field(description="List of available agents")
+    original_task: Task | None = Field(default=None, description="The original task being delegated, used to propagate constraints")
 
     def sanitize_agent_name(self, name: str) -> str:
         """
@@ -50,6 +51,10 @@ class BaseAgentTool(BaseTool):
     ) -> str:
         """
         Execute delegation to an agent with case-insensitive and whitespace-tolerant matching.
+
+        When the original_task has constraints defined, they are automatically
+        propagated to the delegated task and appended to the context so that
+        the worker agent is aware of all original requirements.
 
         Args:
             agent_name: Name/role of the agent to delegate to (case-insensitive)
@@ -114,10 +119,30 @@ class BaseAgentTool(BaseTool):
 
         selected_agent = agent[0]
         try:
+            # Propagate constraints from the original task to the delegated task
+            constraints: list[str] = []
+            if self.original_task and self.original_task.constraints:
+                constraints = list(self.original_task.constraints)
+                logger.info(
+                    "Propagating %d constraint(s) from original task to delegated task for agent '%s': %s",
+                    len(constraints),
+                    self.sanitize_agent_name(selected_agent.role),
+                    constraints,
+                )
+                # Append constraints to context so the worker agent sees them
+                constraints_text = "\n\nTask Constraints (MUST be respected):\n" + "\n".join(
+                    f"- {c}" for c in constraints
+                )
+                if context:
+                    context = context + constraints_text
+                else:
+                    context = constraints_text
+
             task_with_assigned_agent = Task(
                 description=task,
                 agent=selected_agent,
                 expected_output=I18N_DEFAULT.slice("manager_request"),
+                constraints=constraints,
             )
             logger.debug(
                 f"Created task for agent '{self.sanitize_agent_name(selected_agent.role)}': {task}"

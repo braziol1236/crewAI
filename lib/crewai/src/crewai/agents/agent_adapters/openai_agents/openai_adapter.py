@@ -223,18 +223,20 @@ class OpenAIAgentAdapter(BaseAgentAdapter):
         """
         return self._converter_adapter.post_process_result(result.final_output)
 
-    def get_delegation_tools(self, agents: Sequence[BaseAgent]) -> list[BaseTool]:
+    def get_delegation_tools(self, agents: Sequence[BaseAgent], task: Any | None = None) -> list[BaseTool]:
         """Implement delegation tools support.
 
         Creates delegation tools that allow this agent to delegate tasks to other agents.
+        When a task is provided, its constraints are propagated to the delegation tools.
 
         Args:
             agents: List of agents available for delegation.
+            task: Optional task whose constraints should be propagated.
 
         Returns:
             List of delegation tools.
         """
-        agent_tools: AgentTools = AgentTools(agents=agents)
+        agent_tools: AgentTools = AgentTools(agents=agents, task=task)
         return agent_tools.tools()
 
     def configure_structured_output(self, task: Any) -> None:

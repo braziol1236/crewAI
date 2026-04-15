@@ -1608,9 +1608,10 @@ class Crew(FlowTrackable, BaseModel):
         tools: list[BaseTool],
         task_agent: BaseAgent,
         agents: Sequence[BaseAgent],
+        task: Task | None = None,
     ) -> list[BaseTool]:
         if hasattr(task_agent, "get_delegation_tools"):
-            delegation_tools = task_agent.get_delegation_tools(agents)
+            delegation_tools = task_agent.get_delegation_tools(agents, task=task)
             # Cast delegation_tools to the expected type for _merge_tools
             return self._merge_tools(tools, delegation_tools)
         return tools
@@ -1693,7 +1694,7 @@ class Crew(FlowTrackable, BaseModel):
             if not tools:
                 tools = []
             tools = self._inject_delegation_tools(
-                tools, task.agent, agents_for_delegation
+                tools, task.agent, agents_for_delegation, task=task
             )
         return tools
 
@@ -1723,10 +1724,10 @@ class Crew(FlowTrackable, BaseModel):
     ) -> list[BaseTool]:
         if self.manager_agent:
             if task.agent:
-                tools = self._inject_delegation_tools(tools, task.agent, [task.agent])
+                tools = self._inject_delegation_tools(tools, task.agent, [task.agent], task=task)
             else:
                 tools = self._inject_delegation_tools(
-                    tools, self.manager_agent, self.agents
+                    tools, self.manager_agent, self.agents, task=task
                 )
         return tools
 

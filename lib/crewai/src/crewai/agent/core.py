@@ -1091,8 +1091,8 @@ class Agent(BaseAgent):
                 )
             )
 
-    def get_delegation_tools(self, agents: Sequence[BaseAgent]) -> list[BaseTool]:
-        agent_tools = AgentTools(agents=agents)
+    def get_delegation_tools(self, agents: Sequence[BaseAgent], task: Task | None = None) -> list[BaseTool]:
+        agent_tools = AgentTools(agents=agents, task=task)
         return agent_tools.tools()
 
     def get_platform_tools(self, apps: list[PlatformAppOrAction]) -> list[BaseTool]:
