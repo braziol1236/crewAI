@@ -530,7 +530,9 @@ class BaseAgent(BaseModel, ABC, metaclass=AgentMeta):
         pass
 
     @abstractmethod
-    def get_delegation_tools(self, agents: Sequence[BaseAgent]) -> list[BaseTool]:
+    def get_delegation_tools(
+        self, agents: Sequence[BaseAgent], task: Any | None = None
+    ) -> list[BaseTool]:
         """Set the task tools that init BaseAgenTools class."""
 
     @abstractmethod
