@@ -334,6 +334,15 @@ class CrewAgentExecutor(BaseAgentExecutor):
 
                 enforce_rpm_limit(self.request_within_rpm_limit)
 
+                # Don't pass response_model when tools are present to avoid
+                # conflicting with tool-calling — tools and response_format
+                # can't coexist on many LLM providers (see issue #5472).
+                # Structured output is applied as post-processing via
+                # Task._export_output() after the tool loop completes.
+                effective_response_model = (
+                    None if self.original_tools else self.response_model
+                )
+
                 answer = get_llm_response(
                     llm=cast("BaseLLM", self.llm),
                     messages=self.messages,
@@ -341,11 +350,11 @@ class CrewAgentExecutor(BaseAgentExecutor):
                     printer=PRINTER,
                     from_task=self.task,
                     from_agent=self.agent,
-                    response_model=self.response_model,
+                    response_model=effective_response_model,
                     executor_context=self,
                     verbose=self.agent.verbose,
                 )
-                if self.response_model is not None:
+                if effective_response_model is not None:
                     try:
                         if isinstance(answer, BaseModel):
                             output_json = answer.model_dump_json()
@@ -477,6 +486,10 @@ class CrewAgentExecutor(BaseAgentExecutor):
 
                 enforce_rpm_limit(self.request_within_rpm_limit)
 
+                # Never pass response_model in the native tool-calling
+                # loop — tools and response_format can't coexist on many
+                # LLM providers (see issue #5472). Structured output is
+                # applied as post-processing via Task._export_output().
                 answer = get_llm_response(
                     llm=cast("BaseLLM", self.llm),
                     messages=self.messages,
@@ -486,7 +499,7 @@ class CrewAgentExecutor(BaseAgentExecutor):
                     available_functions=None,
                     from_task=self.task,
                     from_agent=self.agent,
-                    response_model=self.response_model,
+                    response_model=None,
                     executor_context=self,
                     verbose=self.agent.verbose,
                 )
@@ -1142,6 +1155,12 @@ class CrewAgentExecutor(BaseAgentExecutor):
 
                 enforce_rpm_limit(self.request_within_rpm_limit)
 
+                # Don't pass response_model when tools are present to avoid
+                # conflicting with tool-calling (see issue #5472).
+                effective_response_model = (
+                    None if self.original_tools else self.response_model
+                )
+
                 answer = await aget_llm_response(
                     llm=cast("BaseLLM", self.llm),
                     messages=self.messages,
@@ -1149,12 +1168,12 @@ class CrewAgentExecutor(BaseAgentExecutor):
                     printer=PRINTER,
                     from_task=self.task,
                     from_agent=self.agent,
-                    response_model=self.response_model,
+                    response_model=effective_response_model,
                     executor_context=self,
                     verbose=self.agent.verbose,
                 )
 
-                if self.response_model is not None:
+                if effective_response_model is not None:
                     try:
                         if isinstance(answer, BaseModel):
                             output_json = answer.model_dump_json()
@@ -1286,6 +1305,8 @@ class CrewAgentExecutor(BaseAgentExecutor):
 
                 enforce_rpm_limit(self.request_within_rpm_limit)
 
+                # Never pass response_model in the native tool-calling
+                # loop (see issue #5472).
                 answer = await aget_llm_response(
                     llm=cast("BaseLLM", self.llm),
                     messages=self.messages,
@@ -1295,7 +1316,7 @@ class CrewAgentExecutor(BaseAgentExecutor):
                     available_functions=None,
                     from_task=self.task,
                     from_agent=self.agent,
-                    response_model=self.response_model,
+                    response_model=None,
                     executor_context=self,
                     verbose=self.agent.verbose,
                 )

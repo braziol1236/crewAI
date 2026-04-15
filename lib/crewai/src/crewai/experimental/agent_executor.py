@@ -1222,6 +1222,12 @@ class AgentExecutor(Flow[AgentExecutorState], BaseAgentExecutor):  # type: ignor
         try:
             enforce_rpm_limit(self.request_within_rpm_limit)
 
+            # Don't pass response_model when tools are present to avoid
+            # conflicting with tool-calling (see issue #5472).
+            effective_response_model = (
+                None if self.original_tools else self.response_model
+            )
+
             answer = get_llm_response(
                 llm=self.llm,
                 messages=list(self.state.messages),
@@ -1229,7 +1235,7 @@ class AgentExecutor(Flow[AgentExecutorState], BaseAgentExecutor):  # type: ignor
                 printer=PRINTER,
                 from_task=self.task,
                 from_agent=self.agent,
-                response_model=self.response_model,
+                response_model=effective_response_model,
                 executor_context=self,
                 verbose=self.agent.verbose,
             )
@@ -1307,7 +1313,8 @@ class AgentExecutor(Flow[AgentExecutorState], BaseAgentExecutor):  # type: ignor
 
             enforce_rpm_limit(self.request_within_rpm_limit)
 
-            # Call LLM with native tools
+            # Call LLM with native tools — never pass response_model
+            # in the native tool-calling loop (see issue #5472).
             answer = get_llm_response(
                 llm=self.llm,
                 messages=list(self.state.messages),
@@ -1317,7 +1324,7 @@ class AgentExecutor(Flow[AgentExecutorState], BaseAgentExecutor):  # type: ignor
                 available_functions=None,
                 from_task=self.task,
                 from_agent=self.agent,
-                response_model=self.response_model,
+                response_model=None,
                 executor_context=self,
                 verbose=self.agent.verbose,
             )

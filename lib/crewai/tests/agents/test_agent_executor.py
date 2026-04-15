@@ -2044,3 +2044,185 @@ class TestVisionImageFormatContract:
         assert hasattr(AnthropicCompletion, "_convert_image_blocks"), (
             "Anthropic provider must have _convert_image_blocks for auto-conversion"
         )
+
+
+# =========================================================================
+# response_model must not leak into the tool-calling loop (issue #5472)
+# =========================================================================
+
+
+class TestResponseModelNotLeakedDuringToolLoop:
+    """Regression tests for issue #5472.
+
+    When output_pydantic / response_model is set on a task, the response_model
+    must NOT be forwarded to the LLM during tool-calling loop iterations.
+    Passing both `tools` and `response_format` causes many non-OpenAI LLMs to
+    skip tool calls entirely.  Structured output conversion should happen only
+    as post-processing via Task._export_output().
+    """
+
+    # -- helpers ----------------------------------------------------------
+
+    @pytest.fixture
+    def mock_deps_with_tools(self):
+        """Dependencies that include original_tools (simulating an agent with tools)."""
+        from pydantic import BaseModel as _BaseModel
+
+        class DummyOutput(_BaseModel):
+            result: str
+
+        llm = Mock()
+        llm.stop = []
+        llm.supports_stop_words.return_value = True
+
+        task = Mock()
+        task.description = "Test task"
+        task.human_input = False
+        task.response_model = DummyOutput
+
+        crew = Mock()
+        crew.verbose = False
+        crew._train = False
+
+        agent = Mock()
+        agent.id = "test-agent"
+        agent.role = "Tester"
+        agent.verbose = False
+        agent.key = "test-key"
+
+        dummy_tool = Mock()
+        dummy_tool.name = "search"
+        dummy_tool.description = "Search tool"
+
+        return {
+            "llm": llm,
+            "task": task,
+            "crew": crew,
+            "agent": agent,
+            "prompt": {"prompt": "Test {input} {tool_names} {tools}"},
+            "max_iter": 10,
+            "tools": [dummy_tool],
+            "tools_names": "search",
+            "stop_words": ["Observation"],
+            "tools_description": "search: Search tool",
+            "tools_handler": Mock(spec=_ToolsHandler),
+            "original_tools": [dummy_tool],
+            "response_model": DummyOutput,
+        }
+
+    @pytest.fixture
+    def mock_deps_no_tools(self):
+        """Dependencies WITHOUT tools — response_model should still be passed."""
+        from pydantic import BaseModel as _BaseModel
+
+        class DummyOutput(_BaseModel):
+            result: str
+
+        llm = Mock()
+        llm.stop = []
+        llm.supports_stop_words.return_value = True
+
+        task = Mock()
+        task.description = "Test task"
+        task.human_input = False
+        task.response_model = DummyOutput
+
+        crew = Mock()
+        crew.verbose = False
+        crew._train = False
+
+        agent = Mock()
+        agent.id = "test-agent"
+        agent.role = "Tester"
+        agent.verbose = False
+        agent.key = "test-key"
+
+        return {
+            "llm": llm,
+            "task": task,
+            "crew": crew,
+            "agent": agent,
+            "prompt": {"prompt": "Test {input} {tool_names} {tools}"},
+            "max_iter": 10,
+            "tools": [],
+            "tools_names": "",
+            "stop_words": [],
+            "tools_description": "",
+            "tools_handler": Mock(spec=_ToolsHandler),
+            "original_tools": [],
+            "response_model": DummyOutput,
+        }
+
+    # -- experimental executor: call_llm_and_parse (ReAct path) -----------
+
+    @patch("crewai.experimental.agent_executor.get_llm_response")
+    @patch("crewai.experimental.agent_executor.enforce_rpm_limit")
+    def test_call_llm_and_parse_omits_response_model_when_tools_present(
+        self, mock_enforce_rpm, mock_get_llm, mock_deps_with_tools,
+    ):
+        """call_llm_and_parse must pass response_model=None when tools exist."""
+        mock_enforce_rpm.return_value = None
+        mock_get_llm.return_value = (
+            "Thought: I need to search\n"
+            "Action: search\n"
+            "Action Input: {\"query\": \"test\"}\n"
+        )
+
+        executor = _build_executor(**mock_deps_with_tools)
+        executor.call_llm_and_parse()
+
+        # Verify get_llm_response was called with response_model=None
+        call_kwargs = mock_get_llm.call_args
+        assert call_kwargs is not None
+        assert call_kwargs.kwargs.get("response_model") is None or (
+            len(call_kwargs.args) > 7 and call_kwargs.args[7] is None
+        ), "response_model must be None when tools are present"
+
+    @patch("crewai.experimental.agent_executor.get_llm_response")
+    @patch("crewai.experimental.agent_executor.enforce_rpm_limit")
+    def test_call_llm_and_parse_keeps_response_model_when_no_tools(
+        self, mock_enforce_rpm, mock_get_llm, mock_deps_no_tools,
+    ):
+        """call_llm_and_parse should still pass response_model when no tools."""
+        from pydantic import BaseModel as _BaseModel
+
+        mock_enforce_rpm.return_value = None
+        # Return a BaseModel-like response when response_model is passed
+        mock_get_llm.return_value = '{"result": "done"}'
+
+        executor = _build_executor(**mock_deps_no_tools)
+        executor.call_llm_and_parse()
+
+        call_kwargs = mock_get_llm.call_args
+        assert call_kwargs is not None
+        rm = call_kwargs.kwargs.get("response_model")
+        assert rm is not None, (
+            "response_model should be passed when no tools are present"
+        )
+
+    # -- experimental executor: call_llm_native_tools ---------------------
+
+    @patch("crewai.experimental.agent_executor.get_llm_response")
+    @patch("crewai.experimental.agent_executor.enforce_rpm_limit")
+    def test_call_llm_native_tools_omits_response_model(
+        self,
+        mock_enforce_rpm,
+        mock_get_llm,
+        mock_deps_with_tools,
+    ):
+        """call_llm_native_tools must always pass response_model=None."""
+        mock_enforce_rpm.return_value = None
+        mock_get_llm.return_value = "Final answer text"
+
+        executor = _build_executor(**mock_deps_with_tools)
+        # Pre-set the openai_tools attribute (normally done by _setup_native_tools)
+        executor._openai_tools = []
+        executor._available_functions = {}
+        executor._tool_name_mapping = {}
+        executor.call_llm_native_tools()
+
+        call_kwargs = mock_get_llm.call_args
+        assert call_kwargs is not None
+        assert call_kwargs.kwargs.get("response_model") is None, (
+            "response_model must be None in native tool-calling loop"
+        )
