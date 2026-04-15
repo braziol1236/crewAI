@@ -8,7 +8,7 @@ See: https://github.com/crewAIInc/crewAI/issues/5476
 """
 
 import logging
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -156,17 +156,14 @@ class TestConstraintPropagationInDelegation:
             "Only frameworks available in Europe",
         ]
 
-        # The context should include the constraints
-        assert "Task Constraints (MUST be respected):" in delegated_context
-        assert "- Only open-source frameworks" in delegated_context
-        assert "- Must be from 2024" in delegated_context
-        assert "- Only frameworks available in Europe" in delegated_context
+        # Context should NOT be modified — constraints are rendered via Task.prompt()
+        assert delegated_context == "Need a comprehensive list"
 
     @patch.object(Agent, "execute_task")
-    def test_constraints_appended_to_existing_context(
+    def test_context_not_modified_by_constraints(
         self, mock_execute, researcher, writer, task_with_constraints
     ):
-        """When context already exists, constraints are appended to it."""
+        """Context is passed through unchanged; constraints live on the Task object."""
         mock_execute.return_value = "result"
 
         tools = AgentTools(agents=[researcher], task=task_with_constraints).tools()
@@ -179,12 +176,13 @@ class TestConstraintPropagationInDelegation:
         )
 
         mock_execute.assert_called_once()
+        delegated_task = mock_execute.call_args[0][0]
         delegated_context = mock_execute.call_args[0][1]
 
-        # Original context should still be there
-        assert delegated_context.startswith("Previous context here")
-        # Constraints should be appended
-        assert "Task Constraints (MUST be respected):" in delegated_context
+        # Context should be unchanged
+        assert delegated_context == "Previous context here"
+        # Constraints should be on the task object
+        assert len(delegated_task.constraints) == 3
 
     @patch.object(Agent, "execute_task")
     def test_no_constraints_no_modification(
@@ -230,13 +228,14 @@ class TestConstraintPropagationInDelegation:
         delegated_context = mock_execute.call_args[0][1]
 
         assert delegated_task.constraints == task_with_constraints.constraints
-        assert "Task Constraints (MUST be respected):" in delegated_context
+        # Context should be unchanged — constraints live on the task
+        assert delegated_context == "Need details"
 
     @patch.object(Agent, "execute_task")
     def test_constraints_propagated_when_no_original_context(
         self, mock_execute, researcher, writer, task_with_constraints
     ):
-        """When delegation has no context, constraints become the context."""
+        """Even with empty context, constraints are on the task, not injected into context."""
         mock_execute.return_value = "result"
 
         tools = AgentTools(agents=[researcher], task=task_with_constraints).tools()
@@ -249,10 +248,13 @@ class TestConstraintPropagationInDelegation:
         )
 
         mock_execute.assert_called_once()
+        delegated_task = mock_execute.call_args[0][0]
         delegated_context = mock_execute.call_args[0][1]
 
-        # Empty string context means constraints text is appended to empty string
-        assert "Task Constraints (MUST be respected):" in delegated_context
+        # Context should remain empty
+        assert delegated_context == ""
+        # Constraints are on the task object
+        assert delegated_task.constraints == task_with_constraints.constraints
 
     @patch.object(Agent, "execute_task")
     def test_delegation_without_original_task_works(

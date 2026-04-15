@@ -56,8 +56,8 @@ class BaseAgentTool(BaseTool):
         Execute delegation to an agent with case-insensitive and whitespace-tolerant matching.
 
         When the original_task has constraints defined, they are automatically
-        propagated to the delegated task and appended to the context so that
-        the worker agent is aware of all original requirements.
+        propagated to the delegated Task object. The constraints are then
+        rendered by Task.prompt() so the worker agent sees them.
 
         Args:
             agent_name: Name/role of the agent to delegate to (case-insensitive)
@@ -122,7 +122,10 @@ class BaseAgentTool(BaseTool):
 
         selected_agent = agent[0]
         try:
-            # Propagate constraints from the original task to the delegated task
+            # Propagate constraints from the original task to the delegated task.
+            # Constraints are set on the Task object so that Task.prompt() renders
+            # them for the worker agent — no need to also inject them into `context`,
+            # which would cause duplication.
             constraints: list[str] = []
             if self.original_task and self.original_task.constraints:
                 constraints = list(self.original_task.constraints)
@@ -132,15 +135,6 @@ class BaseAgentTool(BaseTool):
                     self.sanitize_agent_name(selected_agent.role),
                     constraints,
                 )
-                # Append constraints to context so the worker agent sees them
-                constraints_text = (
-                    "\n\nTask Constraints (MUST be respected):\n"
-                    + "\n".join(f"- {c}" for c in constraints)
-                )
-                if context:
-                    context = context + constraints_text
-                else:
-                    context = constraints_text
 
             task_with_assigned_agent = Task(
                 description=task,
