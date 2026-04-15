@@ -223,7 +223,9 @@ class OpenAIAgentAdapter(BaseAgentAdapter):
         """
         return self._converter_adapter.post_process_result(result.final_output)
 
-    def get_delegation_tools(self, agents: Sequence[BaseAgent], task: Any | None = None) -> list[BaseTool]:
+    def get_delegation_tools(
+        self, agents: Sequence[BaseAgent], task: Any | None = None
+    ) -> list[BaseTool]:
         """Implement delegation tools support.
 
         Creates delegation tools that allow this agent to delegate tasks to other agents.

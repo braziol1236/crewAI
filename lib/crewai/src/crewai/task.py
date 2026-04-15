@@ -909,8 +909,9 @@ class Task(BaseModel):
         tasks_slices = [description]
 
         if self.constraints:
-            constraints_text = "\n\nTask Constraints (MUST be respected):\n" + "\n".join(
-                f"- {constraint}" for constraint in self.constraints
+            constraints_text = (
+                "\n\nTask Constraints (MUST be respected):\n"
+                + "\n".join(f"- {constraint}" for constraint in self.constraints)
             )
             tasks_slices.append(constraints_text)
 

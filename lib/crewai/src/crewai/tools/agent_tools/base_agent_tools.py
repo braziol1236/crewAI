@@ -16,7 +16,10 @@ class BaseAgentTool(BaseTool):
     """Base class for agent-related tools"""
 
     agents: list[BaseAgent] = Field(description="List of available agents")
-    original_task: Task | None = Field(default=None, description="The original task being delegated, used to propagate constraints")
+    original_task: Task | None = Field(
+        default=None,
+        description="The original task being delegated, used to propagate constraints",
+    )
 
     def sanitize_agent_name(self, name: str) -> str:
         """
@@ -130,8 +133,9 @@ class BaseAgentTool(BaseTool):
                     constraints,
                 )
                 # Append constraints to context so the worker agent sees them
-                constraints_text = "\n\nTask Constraints (MUST be respected):\n" + "\n".join(
-                    f"- {c}" for c in constraints
+                constraints_text = (
+                    "\n\nTask Constraints (MUST be respected):\n"
+                    + "\n".join(f"- {c}" for c in constraints)
                 )
                 if context:
                     context = context + constraints_text

@@ -274,7 +274,9 @@ class LangGraphAgentAdapter(BaseAgentAdapter):
             available_tools: list[Any] = self._tool_adapter.tools()
             self._graph.tools = available_tools
 
-    def get_delegation_tools(self, agents: Sequence[BaseAgent], task: Any | None = None) -> list[BaseTool]:
+    def get_delegation_tools(
+        self, agents: Sequence[BaseAgent], task: Any | None = None
+    ) -> list[BaseTool]:
         """Implement delegation tools support for LangGraph.
 
         Creates delegation tools that allow this agent to delegate tasks to other agents.
