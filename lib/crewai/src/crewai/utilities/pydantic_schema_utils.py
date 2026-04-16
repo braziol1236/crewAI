@@ -120,7 +120,12 @@ def resolve_refs(schema: dict[str, Any]) -> dict[str, Any]:
                 if def_name not in defs:
                     raise KeyError(f"Definition '{def_name}' not found in $defs.")
                 if def_name in expanding:
-                    return {}
+                    # Preserve the type information instead of degrading to {}
+                    def_schema = defs[def_name]
+                    stub: dict[str, Any] = {"type": def_schema.get("type", "object")}
+                    if "description" in def_schema:
+                        stub["description"] = def_schema["description"]
+                    return stub
                 expanding.add(def_name)
                 try:
                     return _resolve(deepcopy(defs[def_name]))
@@ -759,6 +764,32 @@ def build_rich_field_description(prop_schema: dict[str, Any]) -> str:
     return ". ".join(parts) if parts else ""
 
 
+def _inline_top_level_ref(schema: dict[str, Any]) -> dict[str, Any]:
+    """Resolve a top-level ``$ref`` while preserving ``$defs`` for nested resolution.
+
+    When ``jsonref.replace_refs`` fails on circular schemas, this helper
+    manually inlines the top-level ``$ref`` so that
+    :func:`_build_model_from_schema` receives a concrete object schema.
+    Inner ``$ref`` pointers are left intact — they are resolved lazily by
+    :func:`_resolve_ref` during model construction, and cycles are caught
+    by the ``in_progress`` map.
+
+    The returned dict deliberately shares sub-objects with the original
+    ``$defs`` entries so that ``id()``-based cycle detection works.
+    """
+    schema = deepcopy(schema)
+    ref = schema.get("$ref")
+    if isinstance(ref, str) and ref.startswith("#/$defs/"):
+        def_name = ref[len("#/$defs/"):]
+        defs = schema.get("$defs", {})
+        if def_name in defs:
+            resolved = defs[def_name]
+            # Attach $defs so effective_root can resolve inner $refs.
+            resolved.setdefault("$defs", defs)
+            return resolved
+    return schema
+
+
 def create_model_from_schema(  # type: ignore[no-any-unimported]
     json_schema: dict[str, Any],
     *,
@@ -813,7 +844,13 @@ def create_model_from_schema(  # type: ignore[no-any-unimported]
         >>> person.name
         'John'
     """
-    json_schema = dict(jsonref.replace_refs(json_schema, proxies=False))
+    try:
+        json_schema = dict(jsonref.replace_refs(json_schema, proxies=False))
+    except jsonref.JsonRefError:
+        # Circular $ref schemas cannot be fully inlined by jsonref.
+        # Manually resolve the top-level $ref (if present) and let
+        # _build_model_from_schema handle cycles via its in_progress map.
+        json_schema = _inline_top_level_ref(json_schema)
 
     effective_root = root_schema or json_schema
 

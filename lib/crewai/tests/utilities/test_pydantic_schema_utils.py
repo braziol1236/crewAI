@@ -26,6 +26,8 @@ from crewai.utilities.pydantic_schema_utils import (
     ensure_type_in_schemas,
     force_additional_properties_false,
     resolve_refs,
+    sanitize_tool_params_for_anthropic_strict,
+    sanitize_tool_params_for_openai_strict,
     strip_null_from_types,
     strip_unsupported_formats,
 )
@@ -882,3 +884,145 @@ class TestEndToEndMCPSchema:
         )
         assert obj.filters.date_from == datetime.date(2025, 1, 1)
         assert obj.filters.categories == ["news", "tech"]
+
+
+# ---------------------------------------------------------------------------
+# Recursive / circular $ref schemas  (issue #5490)
+# ---------------------------------------------------------------------------
+
+RECURSIVE_NODE_SCHEMA: dict[str, Any] = {
+    "$defs": {
+        "Node": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "children": {
+                    "type": "array",
+                    "items": {"$ref": "#/$defs/Node"},
+                },
+            },
+            "required": ["name"],
+        }
+    },
+    "$ref": "#/$defs/Node",
+}
+
+
+class TestResolveRefsRecursive:
+    """resolve_refs must not silently degrade recursive $refs to {}."""
+
+    def test_circular_ref_preserves_type(self) -> None:
+        result = resolve_refs(deepcopy(RECURSIVE_NODE_SCHEMA))
+        items = result["properties"]["children"]["items"]
+        # Before the fix this was {} — now it should carry type info.
+        assert items != {}, "Circular $ref must not degrade to {}"
+        assert items.get("type") == "object"
+
+    def test_non_recursive_schema_still_resolves(self) -> None:
+        schema: dict[str, Any] = {
+            "$defs": {
+                "Address": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                }
+            },
+            "type": "object",
+            "properties": {
+                "home": {"$ref": "#/$defs/Address"},
+            },
+        }
+        result = resolve_refs(deepcopy(schema))
+        assert result["properties"]["home"]["type"] == "object"
+        assert "city" in result["properties"]["home"]["properties"]
+
+
+class TestSanitizeRecursiveSchemas:
+    """Sanitization pipelines must not silently degrade recursive schemas."""
+
+    def test_anthropic_strict_preserves_recursive_type(self) -> None:
+        san = sanitize_tool_params_for_anthropic_strict(deepcopy(RECURSIVE_NODE_SCHEMA))
+        items = san["properties"]["children"]["items"]
+        assert items != {}, "Circular $ref must not degrade to {}"
+        assert items.get("type") == "object"
+
+    def test_openai_strict_preserves_recursive_type(self) -> None:
+        san = sanitize_tool_params_for_openai_strict(deepcopy(RECURSIVE_NODE_SCHEMA))
+        items = san["properties"]["children"]["items"]
+        assert items != {}, "Circular $ref must not degrade to {}"
+        assert items.get("type") == "object"
+
+
+class TestCreateModelFromSchemaRecursive:
+    """create_model_from_schema must handle recursive $ref schemas."""
+
+    def test_model_creation_succeeds(self) -> None:
+        Model = create_model_from_schema(
+            deepcopy(RECURSIVE_NODE_SCHEMA), model_name="NodeModel"
+        )
+        assert Model is not None
+        assert issubclass(Model, BaseModel)
+        assert "name" in Model.model_fields
+        assert "children" in Model.model_fields
+
+    def test_model_accepts_valid_recursive_data(self) -> None:
+        Model = create_model_from_schema(
+            deepcopy(RECURSIVE_NODE_SCHEMA), model_name="NodeModel"
+        )
+        obj = Model(
+            name="root",
+            children=[
+                {"name": "child1", "children": []},
+                {
+                    "name": "child2",
+                    "children": [{"name": "grandchild", "children": []}],
+                },
+            ],
+        )
+        assert obj.name == "root"
+        assert len(obj.children) == 2
+
+    def test_model_rejects_missing_required_field(self) -> None:
+        Model = create_model_from_schema(
+            deepcopy(RECURSIVE_NODE_SCHEMA), model_name="NodeModel"
+        )
+        with pytest.raises(Exception):
+            Model(children=[])  # "name" is required
+
+    def test_model_with_enrich_descriptions(self) -> None:
+        Model = create_model_from_schema(
+            deepcopy(RECURSIVE_NODE_SCHEMA),
+            model_name="NodeModel",
+            enrich_descriptions=True,
+        )
+        assert Model is not None
+        assert "name" in Model.model_fields
+
+    def test_mutual_recursion_schema(self) -> None:
+        """Two definitions that reference each other."""
+        schema: dict[str, Any] = {
+            "$defs": {
+                "Person": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "pets": {
+                            "type": "array",
+                            "items": {"$ref": "#/$defs/Pet"},
+                        },
+                    },
+                    "required": ["name"],
+                },
+                "Pet": {
+                    "type": "object",
+                    "properties": {
+                        "species": {"type": "string"},
+                        "owner": {"$ref": "#/$defs/Person"},
+                    },
+                    "required": ["species"],
+                },
+            },
+            "$ref": "#/$defs/Person",
+        }
+        Model = create_model_from_schema(deepcopy(schema), model_name="PersonModel")
+        assert "name" in Model.model_fields
+        assert "pets" in Model.model_fields
