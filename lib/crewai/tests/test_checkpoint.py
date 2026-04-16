@@ -8,12 +8,13 @@ import sqlite3
 import tempfile
 import time
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from crewai.agent.core import Agent
 from crewai.agents.agent_builder.base_agent import BaseAgent
+from crewai.cli.checkpoint_tui import CheckpointTUI, _run_checkpoint_tui_async
 from crewai.crew import Crew
 from crewai.flow.flow import Flow, start
 from crewai.state.checkpoint_config import CheckpointConfig
@@ -537,3 +538,147 @@ class TestKickoffFromCheckpoint:
         )
         assert mock_restored.checkpoint.restore_from is None
         assert result == "flow_result"
+
+
+# ---------- Checkpoint TUI Flow dispatch ----------
+
+
+class TestCheckpointTUIFlowDetection:
+    """Tests for _is_flow_checkpoint and TUI entity-type dispatch."""
+
+    def test_is_flow_checkpoint_true(self) -> None:
+        entry = {"entities": [{"type": "flow", "name": "MyFlow"}]}
+        assert CheckpointTUI._is_flow_checkpoint(entry) is True
+
+    def test_is_flow_checkpoint_false_for_crew(self) -> None:
+        entry = {"entities": [{"type": "crew", "name": "MyCrew"}]}
+        assert CheckpointTUI._is_flow_checkpoint(entry) is False
+
+    def test_is_flow_checkpoint_false_when_no_entities(self) -> None:
+        assert CheckpointTUI._is_flow_checkpoint({}) is False
+        assert CheckpointTUI._is_flow_checkpoint({"entities": []}) is False
+
+    def test_is_flow_checkpoint_mixed_entities(self) -> None:
+        entry = {
+            "entities": [
+                {"type": "crew", "name": "InnerCrew"},
+                {"type": "flow", "name": "MyFlow"},
+            ]
+        }
+        assert CheckpointTUI._is_flow_checkpoint(entry) is True
+
+    def test_is_flow_checkpoint_agent_only(self) -> None:
+        entry = {"entities": [{"type": "agent", "name": "AgentX"}]}
+        assert CheckpointTUI._is_flow_checkpoint(entry) is False
+
+
+class TestCheckpointTUIAsyncDispatch:
+    """Tests for _run_checkpoint_tui_async dispatching to Flow vs Crew."""
+
+    @pytest.mark.asyncio
+    async def test_flow_resume_dispatches_to_flow(self) -> None:
+        mock_flow = MagicMock(spec=Flow)
+        mock_flow.akickoff = AsyncMock(return_value="flow_ok")
+
+        with (
+            patch.object(
+                CheckpointTUI, "run_async", return_value=("/cp/path", "resume", None, None, True)
+            ),
+            patch.object(Flow, "from_checkpoint", return_value=mock_flow) as mock_from_cp,
+        ):
+            await _run_checkpoint_tui_async("./.checkpoints")
+
+        mock_from_cp.assert_called_once()
+        mock_flow.akickoff.assert_awaited_once_with(inputs=None)
+
+    @pytest.mark.asyncio
+    async def test_flow_fork_dispatches_to_flow(self) -> None:
+        mock_flow = MagicMock(spec=Flow)
+        mock_flow.akickoff = AsyncMock(return_value="flow_forked")
+
+        with (
+            patch.object(
+                CheckpointTUI, "run_async", return_value=("/cp/path", "fork", None, None, True)
+            ),
+            patch.object(Flow, "fork", return_value=mock_flow) as mock_fork,
+        ):
+            await _run_checkpoint_tui_async("./.checkpoints")
+
+        mock_fork.assert_called_once()
+        mock_flow.akickoff.assert_awaited_once_with(inputs=None)
+
+    @pytest.mark.asyncio
+    async def test_crew_resume_dispatches_to_crew(self) -> None:
+        mock_crew = MagicMock(spec=Crew)
+        mock_crew.akickoff = AsyncMock(return_value="crew_ok")
+
+        with (
+            patch.object(
+                CheckpointTUI, "run_async", return_value=("/cp/path", "resume", None, None, False)
+            ),
+            patch.object(Crew, "from_checkpoint", return_value=mock_crew) as mock_from_cp,
+        ):
+            await _run_checkpoint_tui_async("./.checkpoints")
+
+        mock_from_cp.assert_called_once()
+        mock_crew.akickoff.assert_awaited_once_with(inputs=None)
+
+    @pytest.mark.asyncio
+    async def test_crew_fork_dispatches_to_crew(self) -> None:
+        mock_crew = MagicMock(spec=Crew)
+        mock_crew.akickoff = AsyncMock(return_value="crew_forked")
+
+        with (
+            patch.object(
+                CheckpointTUI, "run_async", return_value=("/cp/path", "fork", None, None, False)
+            ),
+            patch.object(Crew, "fork", return_value=mock_crew) as mock_fork,
+        ):
+            await _run_checkpoint_tui_async("./.checkpoints")
+
+        mock_fork.assert_called_once()
+        mock_crew.akickoff.assert_awaited_once_with(inputs=None)
+
+    @pytest.mark.asyncio
+    async def test_flow_resume_with_inputs(self) -> None:
+        mock_flow = MagicMock(spec=Flow)
+        mock_flow.akickoff = AsyncMock(return_value="flow_with_inputs")
+
+        with (
+            patch.object(
+                CheckpointTUI,
+                "run_async",
+                return_value=("/cp/path", "resume", {"topic": "AI"}, None, True),
+            ),
+            patch.object(Flow, "from_checkpoint", return_value=mock_flow),
+        ):
+            await _run_checkpoint_tui_async("./.checkpoints")
+
+        mock_flow.akickoff.assert_awaited_once_with(inputs={"topic": "AI"})
+
+    @pytest.mark.asyncio
+    async def test_flow_skips_task_overrides(self) -> None:
+        """Task overrides should be ignored for Flow checkpoints."""
+        mock_flow = MagicMock(spec=Flow)
+        mock_flow.akickoff = AsyncMock(return_value="flow_no_overrides")
+
+        overrides = {0: "new output"}
+        with (
+            patch.object(
+                CheckpointTUI,
+                "run_async",
+                return_value=("/cp/path", "resume", None, overrides, True),
+            ),
+            patch.object(Flow, "from_checkpoint", return_value=mock_flow),
+        ):
+            await _run_checkpoint_tui_async("./.checkpoints")
+
+        # Flow should not have tasks attribute accessed for overrides
+        mock_flow.akickoff.assert_awaited_once_with(inputs=None)
+
+    @pytest.mark.asyncio
+    async def test_tui_quit_returns_none(self) -> None:
+        """If the user quits the TUI, nothing should be called."""
+        with patch.object(CheckpointTUI, "run_async", return_value=None):
+            # Should not raise
+            await _run_checkpoint_tui_async("./.checkpoints")
