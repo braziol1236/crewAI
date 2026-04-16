@@ -566,40 +566,47 @@ async def _run_checkpoint_tui_async(location: str) -> None:
 
         if action == "fork":
             click.echo(f"\nForking Flow from: {selected}\n")
-            entity = Flow.fork(config)
+            flow = Flow.fork(config)
         else:
             click.echo(f"\nResuming Flow from: {selected}\n")
-            entity = Flow.from_checkpoint(config)
+            flow = Flow.from_checkpoint(config)
+
+        if inputs:
+            click.echo("Inputs:")
+            for k, v in inputs.items():
+                click.echo(f"  {k}: {v}")
+            click.echo()
+
+        result = await flow.akickoff(inputs=inputs)
+        click.echo(f"\nResult: {getattr(result, 'raw', result)}")
+        return
+
+    from crewai.crew import Crew
+
+    if action == "fork":
+        click.echo(f"\nForking from: {selected}\n")
+        crew = Crew.fork(config)
     else:
-        from crewai.crew import Crew
+        click.echo(f"\nResuming from: {selected}\n")
+        crew = Crew.from_checkpoint(config)
 
-        if action == "fork":
-            click.echo(f"\nForking from: {selected}\n")
-            entity = Crew.fork(config)
-        else:
-            click.echo(f"\nResuming from: {selected}\n")
-            entity = Crew.from_checkpoint(config)
-
-    if task_overrides and not is_flow:
+    if task_overrides:
         click.echo("Modifications:")
         overridden_agents: set[int] = set()
         for task_idx, new_output in task_overrides.items():
-            if (
-                task_idx < len(entity.tasks)
-                and entity.tasks[task_idx].output is not None
-            ):
-                desc = entity.tasks[task_idx].description or f"Task {task_idx + 1}"
+            if task_idx < len(crew.tasks) and crew.tasks[task_idx].output is not None:
+                desc = crew.tasks[task_idx].description or f"Task {task_idx + 1}"
                 if len(desc) > 60:
                     desc = desc[:57] + "..."
-                entity.tasks[task_idx].output.raw = new_output  # type: ignore[union-attr]
+                crew.tasks[task_idx].output.raw = new_output  # type: ignore[union-attr]
                 preview = new_output.replace("\n", " ")
                 if len(preview) > 80:
                     preview = preview[:77] + "..."
                 click.echo(f"  Task {task_idx + 1}: {desc}")
                 click.echo(f"    -> {preview}")
-                agent = entity.tasks[task_idx].agent
+                agent = crew.tasks[task_idx].agent
                 if agent and agent.agent_executor:
-                    nth = sum(1 for t in entity.tasks[:task_idx] if t.agent is agent)
+                    nth = sum(1 for t in crew.tasks[:task_idx] if t.agent is agent)
                     messages = agent.agent_executor.messages
                     system_positions = [
                         i for i, m in enumerate(messages) if m.get("role") == "system"
@@ -619,7 +626,7 @@ async def _run_checkpoint_tui_async(location: str) -> None:
 
         earliest = min(task_overrides)
         for offset, subsequent in enumerate(
-            entity.tasks[earliest + 1 :], start=earliest + 1
+            crew.tasks[earliest + 1 :], start=earliest + 1
         ):
             if subsequent.output and offset not in task_overrides:
                 subsequent.output = None
@@ -635,7 +642,7 @@ async def _run_checkpoint_tui_async(location: str) -> None:
             click.echo(f"  {k}: {v}")
         click.echo()
 
-    result = await entity.akickoff(inputs=inputs)
+    result = await crew.akickoff(inputs=inputs)
     click.echo(f"\nResult: {getattr(result, 'raw', result)}")
 
 
