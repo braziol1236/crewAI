@@ -780,7 +780,7 @@ def _inline_top_level_ref(schema: dict[str, Any]) -> dict[str, Any]:
     schema = deepcopy(schema)
     ref = schema.get("$ref")
     if isinstance(ref, str) and ref.startswith("#/$defs/"):
-        def_name = ref[len("#/$defs/"):]
+        def_name = ref[len("#/$defs/") :]
         defs = schema.get("$defs", {})
         if def_name in defs:
             resolved = defs[def_name]
