@@ -25,6 +25,13 @@ from crewai.utilities.version import get_crewai_version
 
 MIN_REQUIRED_VERSION: Final[Literal["0.98.0"]] = "0.98.0"
 
+# Static fallbacks used when an LLM call fails while generating descriptions
+# for chat inputs or the crew itself. Returning a generic description is
+# preferable to crashing the process (see issue #5510), since these strings are
+# only surfaced in the CrewAI chat UI.
+DEFAULT_INPUT_DESCRIPTION: Final[str] = "Input value for the crew's tasks and agents."
+DEFAULT_CREW_DESCRIPTION: Final[str] = "A CrewAI crew."
+
 
 def check_conversational_crews_version(
     crewai_version: str, pyproject_data: dict[str, Any]
@@ -482,7 +489,22 @@ def generate_input_description_with_ai(
         "Context:\n"
         f"{context}"
     )
-    response = chat_llm.call(messages=[{"role": "user", "content": prompt}])
+    try:
+        response = chat_llm.call(messages=[{"role": "user", "content": prompt}])
+    except Exception as e:
+        # The LLM call can fail for many transient reasons (network, rate
+        # limits, provider outages, misconfigured credentials, etc.). This
+        # function is called at import time by downstream consumers such as
+        # `ag_ui_crewai.crews.ChatWithCrewFlow`, so letting the exception
+        # propagate would crash the containing process before any HTTP server
+        # has a chance to bind to its port. Fall back to a generic description
+        # rather than taking down the whole process (see issue #5510).
+        click.secho(
+            f"Warning: Failed to generate AI description for input '{input_name}' "
+            f"({type(e).__name__}: {e}). Falling back to a generic description.",
+            fg="yellow",
+        )
+        return DEFAULT_INPUT_DESCRIPTION
     return str(response).strip()
 
 
@@ -532,5 +554,16 @@ def generate_crew_description_with_ai(crew: Crew, chat_llm: LLM | BaseLLM) -> st
         "Context:\n"
         f"{context}"
     )
-    response = chat_llm.call(messages=[{"role": "user", "content": prompt}])
+    try:
+        response = chat_llm.call(messages=[{"role": "user", "content": prompt}])
+    except Exception as e:
+        # See comment in `generate_input_description_with_ai`: falling back to
+        # a generic description is preferable to crashing the process when the
+        # LLM provider is temporarily unavailable (see issue #5510).
+        click.secho(
+            f"Warning: Failed to generate AI description for crew "
+            f"({type(e).__name__}: {e}). Falling back to a generic description.",
+            fg="yellow",
+        )
+        return DEFAULT_CREW_DESCRIPTION
     return str(response).strip()
