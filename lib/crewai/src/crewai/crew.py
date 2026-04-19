@@ -625,6 +625,42 @@ class Crew(FlowTrackable, BaseModel):
         return self
 
     @model_validator(mode="after")
+    def sync_agents_with_tasks(self) -> Self:
+        """Ensure ``agents`` includes every agent assigned to a task.
+
+        When a ``Task`` has an agent assigned (``task.agent=agent``) but that
+        agent is not listed in ``Crew.agents``, downstream setup such as
+        ``agent.crew = crew`` is skipped, which causes features that depend
+        on the crew reference (e.g. ``input_files`` injection, delegation
+        tools, crew memory lookups) to silently no-op.
+
+        This validator auto-populates ``self.agents`` with any task agent
+        that isn't already present so the crew behaves the same whether or
+        not ``agents=[...]`` was passed explicitly.
+        """
+        if not self.tasks:
+            return self
+
+        existing: list[BaseAgent] = list(self.agents)
+
+        def _contains(agent: BaseAgent) -> bool:
+            return any(existing_agent is agent for existing_agent in existing)
+
+        for task in self.tasks:
+            task_agent = task.agent
+            if task_agent is None:
+                continue
+            if task_agent is self.manager_agent:
+                continue
+            if not _contains(task_agent):
+                existing.append(task_agent)
+
+        if len(existing) != len(self.agents):
+            self.agents = existing
+
+        return self
+
+    @model_validator(mode="after")
     def check_manager_llm(self) -> Self:
         """Validates that the language model is set when using hierarchical process."""
         if self.process == Process.hierarchical:

@@ -458,3 +458,111 @@ class TestCrewMultimodalFileUpload:
 
         assert result.raw
         assert len(result.raw) > 0
+
+
+class TestCrewMultimodalWithoutExplicitAgents:
+    """Regression tests for issue #5534.
+
+    ``Task.input_files`` must be propagated even when ``Crew`` is constructed
+    with only ``tasks=[...]`` and no explicit ``agents=[...]``. Prior to the
+    fix, ``crew.agents`` was empty in that case, ``setup_agents`` never wired
+    ``task.agent.crew = crew``, and file injection silently no-op'd.
+    """
+
+    @staticmethod
+    def _build_task_and_crew(
+        image_file: ImageFile,
+    ) -> tuple[Agent, Task, Crew]:
+        llm = LLM(model="openai/gpt-4o-mini")
+        agent = Agent(
+            role="File Analyst",
+            goal="Analyze files",
+            backstory="Expert analyst.",
+            llm=llm,
+            multimodal=True,
+            verbose=False,
+        )
+        task = Task(
+            description="Describe the image.",
+            expected_output="A brief description.",
+            agent=agent,
+            input_files={"chart": image_file},
+        )
+        crew = Crew(tasks=[task], verbose=False)
+        return agent, task, crew
+
+    def test_crew_agents_auto_populated_from_tasks(
+        self, image_file: ImageFile
+    ) -> None:
+        """Crew.agents should include task.agent even if not passed explicitly."""
+        agent, _task, crew = self._build_task_and_crew(image_file)
+
+        assert agent in crew.agents
+        assert len(crew.agents) == 1
+
+    def test_crew_agents_not_duplicated_when_provided_explicitly(
+        self, image_file: ImageFile
+    ) -> None:
+        """When agents=[agent] is passed explicitly, no duplicates are added."""
+        llm = LLM(model="openai/gpt-4o-mini")
+        agent = Agent(
+            role="File Analyst",
+            goal="Analyze files",
+            backstory="Expert analyst.",
+            llm=llm,
+            multimodal=True,
+            verbose=False,
+        )
+        task = Task(
+            description="Describe the image.",
+            expected_output="A brief description.",
+            agent=agent,
+            input_files={"chart": image_file},
+        )
+        crew = Crew(agents=[agent], tasks=[task], verbose=False)
+
+        assert crew.agents.count(agent) == 1
+
+    def test_prepare_kickoff_wires_task_agent_to_crew(
+        self, image_file: ImageFile
+    ) -> None:
+        """Task agents not in ``agents=[...]`` should still get ``agent.crew``
+        set so downstream file/delegation code can find the crew."""
+        from crewai.crews.utils import prepare_kickoff
+        from crewai.utilities.file_store import clear_files, get_all_files
+
+        agent, task, crew = self._build_task_and_crew(image_file)
+
+        try:
+            prepare_kickoff(crew, inputs=None, input_files=None)
+
+            assert agent.crew is crew
+
+            # After prepare_kickoff + task._store_input_files, files stored
+            # at the task level must be retrievable via the crew id.
+            task._store_input_files()
+            files = get_all_files(crew.id, task.id)
+            assert files is not None
+            assert "chart" in files
+        finally:
+            clear_files(crew.id)
+
+    def test_task_prompt_includes_input_files_without_explicit_agents(
+        self, image_file: ImageFile
+    ) -> None:
+        """``task.prompt()`` must reference the input file even when the
+        crew is built without ``agents=[...]``."""
+        from crewai.crews.utils import prepare_kickoff
+        from crewai.utilities.file_store import clear_files
+
+        _agent, task, crew = self._build_task_and_crew(image_file)
+
+        try:
+            prepare_kickoff(crew, inputs=None, input_files=None)
+            task._store_input_files()
+
+            rendered = task.prompt()
+
+            assert "chart" in rendered
+        finally:
+            clear_files(crew.id)
