@@ -304,7 +304,7 @@ class TestTraceListenerSetup:
                 # Verify the first completion event has proper structure
                 completion_event = completion_events[0]
                 assert "crew_name" in completion_event.event_data
-                assert completion_event.event_data["crew_name"] == "crew"
+                assert completion_event.event_data["crew_name"] == "Crew"
 
                 # Verify all events have proper structure
                 for call in add_event_mock.call_args_list:

@@ -261,6 +261,12 @@ def test_crew_name():
     assert crew._crew_name == "InternalCrew"
 
 
+def test_crew_decorator_propagates_class_name_to_instance():
+    """@crew-decorated factory method should set Crew.name to the decorated class name."""
+    crew_instance = InternalCrew().crew()
+    assert crew_instance.name == "InternalCrew"
+
+
 @tool
 def simple_tool():
     """Return 'Hi!'"""
