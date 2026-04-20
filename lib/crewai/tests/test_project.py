@@ -263,7 +263,8 @@ def test_crew_name():
 
 def test_crew_decorator_propagates_class_name_to_instance():
     """@crew-decorated factory method should set Crew.name to the decorated class name."""
-    crew_instance: Crew = cast(Any, InternalCrew()).crew()
+    internal_crew_cls = cast(type[Any], InternalCrew)
+    crew_instance: Crew = cast(Any, internal_crew_cls()).crew()
     assert crew_instance.name == "InternalCrew"
 
 
