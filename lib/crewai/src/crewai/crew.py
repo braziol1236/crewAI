@@ -787,6 +787,11 @@ class Crew(FlowTrackable, BaseModel):
         return self
 
     @property
+    def display_name(self) -> str:
+        """Effective crew name for telemetry and UI, falling back to class name."""
+        return self.name or type(self).__name__
+
+    @property
     def key(self) -> str:
         source: list[str] = [agent.key for agent in self.agents] + [
             task.key for task in self.tasks
@@ -853,7 +858,7 @@ class Crew(FlowTrackable, BaseModel):
             crewai_event_bus.emit(
                 self,
                 CrewTrainStartedEvent(
-                    crew_name=self.name or self.__class__.__name__,
+                    crew_name=self.display_name,
                     n_iterations=n_iterations,
                     filename=filename,
                     inputs=inputs,
@@ -881,7 +886,7 @@ class Crew(FlowTrackable, BaseModel):
             crewai_event_bus.emit(
                 self,
                 CrewTrainCompletedEvent(
-                    crew_name=self.name or self.__class__.__name__,
+                    crew_name=self.display_name,
                     n_iterations=n_iterations,
                     filename=filename,
                 ),
@@ -891,7 +896,7 @@ class Crew(FlowTrackable, BaseModel):
                 self,
                 CrewTrainFailedEvent(
                     error=str(e),
-                    crew_name=self.name or self.__class__.__name__,
+                    crew_name=self.display_name,
                 ),
             )
             self._logger.log("error", f"Training failed: {e}", color="red")
@@ -977,7 +982,7 @@ class Crew(FlowTrackable, BaseModel):
                 self,
                 CrewKickoffFailedEvent(
                     error=str(e),
-                    crew_name=self.name or self.__class__.__name__,
+                    crew_name=self.display_name,
                     started_event_id=self._kickoff_event_id,
                 ),
             )
@@ -1188,7 +1193,7 @@ class Crew(FlowTrackable, BaseModel):
                 self,
                 CrewKickoffFailedEvent(
                     error=str(e),
-                    crew_name=self.name or self.__class__.__name__,
+                    crew_name=self.display_name,
                     started_event_id=self._kickoff_event_id,
                 ),
             )
@@ -1794,7 +1799,7 @@ class Crew(FlowTrackable, BaseModel):
         crewai_event_bus.emit(
             self,
             CrewKickoffCompletedEvent(
-                crew_name=self.name or self.__class__.__name__,
+                crew_name=self.display_name,
                 output=final_task_output,
                 total_tokens=self.token_usage.total_tokens,
                 started_event_id=self._kickoff_event_id,
@@ -2056,7 +2061,7 @@ class Crew(FlowTrackable, BaseModel):
             crewai_event_bus.emit(
                 self,
                 CrewTestStartedEvent(
-                    crew_name=self.name or self.__class__.__name__,
+                    crew_name=self.display_name,
                     n_iterations=n_iterations,
                     eval_llm=llm_instance,
                     inputs=inputs,
@@ -2075,7 +2080,7 @@ class Crew(FlowTrackable, BaseModel):
             crewai_event_bus.emit(
                 self,
                 CrewTestCompletedEvent(
-                    crew_name=self.name or self.__class__.__name__,
+                    crew_name=self.display_name,
                 ),
             )
         except Exception as e:
@@ -2083,7 +2088,7 @@ class Crew(FlowTrackable, BaseModel):
                 self,
                 CrewTestFailedEvent(
                     error=str(e),
-                    crew_name=self.name or self.__class__.__name__,
+                    crew_name=self.display_name,
                 ),
             )
             raise

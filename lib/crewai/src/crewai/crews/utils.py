@@ -311,7 +311,7 @@ def prepare_kickoff(
             fmt = ConsoleFormatter(verbose=True)
             content = fmt.create_status_content(
                 "Resuming from Checkpoint",
-                crew.name or crew.__class__.__name__,
+                crew.display_name,
                 "bright_magenta",
                 ID=str(crew.id),
             )
@@ -320,7 +320,7 @@ def prepare_kickoff(
             )
     else:
         started_event = CrewKickoffStartedEvent(
-            crew_name=crew.name or crew.__class__.__name__,
+            crew_name=crew.display_name,
             inputs=normalized,
         )
         crew._kickoff_event_id = started_event.event_id
