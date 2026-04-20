@@ -562,3 +562,110 @@ class TestKickoffFromCheckpoint:
         )
         assert mock_restored.checkpoint.restore_from is None
         assert result == "flow_result"
+
+
+# ---------- Pydantic model serialization in checkpoints (issue #5544) ----------
+
+
+class TestPydanticTypeFieldSerialization:
+    """Issue #5544 (Issue I): checkpoint serialization must not blow up on
+    fields that hold ``type[BaseModel]`` references — e.g. a Task's
+    ``output_pydantic`` / ``output_json`` / ``response_model`` — nor on
+    events that wrap such tasks in their payload.
+    """
+
+    def test_task_dumps_type_class_field_to_dotted_path(self) -> None:
+        from pydantic import BaseModel as PydanticModel
+
+        class FamilyList(PydanticModel):
+            families: list[str]
+
+        task = Task(
+            description="d",
+            expected_output="e",
+            output_pydantic=FamilyList,
+        )
+        dumped = task.model_dump(mode="json")
+        # The class is serialized as ``module.qualname``
+        assert isinstance(dumped["output_pydantic"], str)
+        assert dumped["output_pydantic"].endswith("FamilyList")
+
+    def test_task_round_trip_restores_class_reference(self) -> None:
+        from pydantic import BaseModel as PydanticModel
+
+        global _CheckpointReplyModel  # noqa: PLW0603
+
+        class _CheckpointReplyModel(PydanticModel):
+            value: int
+
+        task = Task(
+            description="d",
+            expected_output="e",
+            output_pydantic=_CheckpointReplyModel,
+        )
+        dumped_json = task.model_dump_json()
+        restored = Task.model_validate_json(
+            dumped_json, context={"from_checkpoint": True}
+        )
+        assert restored.output_pydantic is _CheckpointReplyModel
+
+    def test_task_round_trip_unknown_class_path_degrades_gracefully(self) -> None:
+        # Mirrors a checkpoint produced in a different process / repo where
+        # the class is no longer importable. We accept a None restore over
+        # blowing up — user code re-instantiates the Task with the right
+        # class anyway.
+        restored = Task.model_validate(
+            {
+                "description": "d",
+                "expected_output": "e",
+                "output_pydantic": "no_such_module.NoSuchClass",
+            },
+            context={"from_checkpoint": True},
+        )
+        assert restored.output_pydantic is None
+
+    def test_runtime_state_with_event_carrying_pydantic_task_dumps_to_json(
+        self,
+    ) -> None:
+        """End-to-end regression for issue #5544 Issue I.
+
+        A Crew + Task with ``output_pydantic`` produces events whose payload
+        carries the Task. Without the field-level JSON serialization on
+        ``EventNode.event``, this dump explodes with PydanticSerializationError
+        on the embedded ``type[BaseModel]`` reference.
+        """
+        from pydantic import BaseModel as PydanticModel
+
+        from crewai import Agent, Crew
+        from crewai.events.types.task_events import TaskCompletedEvent
+        from crewai.tasks.task_output import TaskOutput
+
+        class FamilyList(PydanticModel):
+            families: list[str]
+
+        agent = Agent(role="r", goal="g", backstory="b", llm="gpt-4o-mini")
+        task = Task(
+            description="d",
+            expected_output="e",
+            agent=agent,
+            output_pydantic=FamilyList,
+        )
+        crew = Crew(agents=[agent], tasks=[task], verbose=False)
+        state = RuntimeState(root=[crew])
+
+        event = TaskCompletedEvent(
+            task=task,
+            output=TaskOutput(
+                description="d",
+                expected_output="e",
+                raw="{}",
+                agent="r",
+            ),
+        )
+        state._event_record.add(event)
+
+        # Should not raise PydanticSerializationError.
+        payload = state.model_dump(mode="json")
+        # And it should round-trip through json.dumps (the actual checkpoint
+        # writer does this immediately after).
+        json.dumps(payload)

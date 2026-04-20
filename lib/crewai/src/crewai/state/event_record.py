@@ -8,7 +8,14 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, Field, PlainSerializer, PrivateAttr
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    Field,
+    PrivateAttr,
+    SerializationInfo,
+    field_serializer,
+)
 
 from crewai.events.base_events import BaseEvent
 from crewai.utilities.rw_lock import RWLock
@@ -66,9 +73,23 @@ class EventNode(BaseModel):
     event: Annotated[
         BaseEvent,
         BeforeValidator(_resolve_event),
-        PlainSerializer(lambda v: v.model_dump()),
     ]
     edges: dict[EdgeType, list[str]] = Field(default_factory=dict)
+
+    @field_serializer("event")
+    def _serialize_event(
+        self, value: BaseEvent, info: SerializationInfo
+    ) -> dict[str, Any]:
+        """Dump the event, propagating JSON mode to nested fields.
+
+        Without this the default ``v.model_dump()`` discards JSON mode, so any
+        non-JSON-native nested values (e.g. ``type[BaseModel]`` references on
+        a Task payload) are passed raw to ``json.dumps`` and explode with
+        ``PydanticSerializationError``.
+        """
+        if info.mode == "json":
+            return value.model_dump(mode="json")
+        return value.model_dump()
 
     def add_edge(self, edge_type: EdgeType, target_id: str) -> None:
         """Add an edge from this node to another.

@@ -768,3 +768,59 @@ def test_per_guardrail_independent_retry_tracking():
     assert call_counts["g3"] == 1
 
     assert "G3(1)" in result.raw
+
+
+def test_guardrail_retry_with_pydantic_agent_result():
+    """Regression test for issue #5544 (Issue II).
+
+    When a task has ``output_pydantic`` set and the LLM returns a structured
+    Pydantic model, the agent's execute result is the Pydantic instance — not
+    a string. On a guardrail retry, ``TaskOutput.raw`` is typed ``str``, so
+    feeding the model directly to ``raw=`` blew up with a ValidationError and
+    aborted the retry path. The retry should normalize the model to JSON
+    before constructing ``TaskOutput``.
+    """
+    from pydantic import BaseModel
+
+    class Family(BaseModel):
+        family_id: int
+        name: str
+        size: int
+
+    class FamilyList(BaseModel):
+        families: list[Family]
+
+    bad = FamilyList(families=[Family(family_id=1, name="X", size=2)])
+    good = FamilyList(
+        families=[Family(family_id=1, name="Smiths", size=2)]
+    )
+
+    def is_family_guardrail(result: TaskOutput) -> tuple[bool, str]:
+        if result.pydantic is None:
+            return (False, "No pydantic output")
+        bad_names = [f for f in result.pydantic.families if len(f.name) < 3]
+        if bad_names:
+            return (False, "Family name too short, must be >= 3 chars")
+        return (True, result)
+
+    agent = Mock()
+    agent.role = "test_agent"
+    agent.execute_task.side_effect = [bad, good]
+    agent.crew = None
+    agent.last_messages = []
+
+    task = create_smart_task(
+        description="Test pydantic retry",
+        expected_output="JSON list of families",
+        output_pydantic=FamilyList,
+        guardrails=[is_family_guardrail],
+        guardrail_max_retries=2,
+    )
+
+    result = task.execute_sync(agent=agent)
+
+    assert isinstance(result, TaskOutput)
+    assert isinstance(result.raw, str)
+    assert isinstance(result.pydantic, FamilyList)
+    assert result.pydantic.families[0].name == "Smiths"
+    assert agent.execute_task.call_count == 2

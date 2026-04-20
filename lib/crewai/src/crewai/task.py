@@ -28,6 +28,7 @@ from pydantic import (
     BaseModel,
     BeforeValidator,
     Field,
+    PlainSerializer,
     PrivateAttr,
     field_validator,
     model_validator,
@@ -86,6 +87,58 @@ from crewai.utilities.printer import PRINTER
 from crewai.utilities.string_utils import interpolate_only
 
 
+def _serialize_class_ref(value: Any) -> str | None:
+    """Serialize a class reference to a ``module.qualname`` string.
+
+    Pydantic's default JSON serializer cannot handle ``type[BaseModel]``
+    and similar class-valued fields, which raises
+    ``PydanticSerializationError`` during checkpointing. We emit a
+    dotted import path so the value is round-trippable.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, type):
+        module = getattr(value, "__module__", None)
+        qualname = getattr(value, "__qualname__", None) or getattr(
+            value, "__name__", None
+        )
+        if module and qualname:
+            return f"{module}.{qualname}"
+        return None
+    return None
+
+
+def _validate_class_ref(value: Any) -> Any:
+    """Resolve a serialized class reference back into a class.
+
+    Accepts an existing class/``None`` unchanged. A string is interpreted as
+    a ``module.qualname`` path; if it cannot be imported, ``None`` is
+    returned so restoration degrades gracefully (user code re-instantiates
+    the Task with the correct class anyway).
+    """
+    if value is None or isinstance(value, type):
+        return value
+    if isinstance(value, str):
+        import importlib
+
+        module_path, _, qualname = value.rpartition(".")
+        if not module_path or not qualname:
+            return None
+        try:
+            module = importlib.import_module(module_path)
+        except ImportError:
+            return None
+        obj: Any = module
+        for part in qualname.split("."):
+            obj = getattr(obj, part, None)
+            if obj is None:
+                return None
+        return obj if isinstance(obj, type) else None
+    return value
+
+
 class Task(BaseModel):
     """Class that represents a task to be executed.
 
@@ -141,15 +194,33 @@ class Task(BaseModel):
         description="Whether the task should be executed asynchronously or not.",
         default=False,
     )
-    output_json: type[BaseModel] | None = Field(
+    output_json: Annotated[
+        type[BaseModel] | None,
+        BeforeValidator(_validate_class_ref),
+        PlainSerializer(
+            _serialize_class_ref, return_type=str | None, when_used="json"
+        ),
+    ] = Field(
         description="A Pydantic model to be used to create a JSON output.",
         default=None,
     )
-    output_pydantic: type[BaseModel] | None = Field(
+    output_pydantic: Annotated[
+        type[BaseModel] | None,
+        BeforeValidator(_validate_class_ref),
+        PlainSerializer(
+            _serialize_class_ref, return_type=str | None, when_used="json"
+        ),
+    ] = Field(
         description="A Pydantic model to be used to create a Pydantic output.",
         default=None,
     )
-    response_model: type[BaseModel] | None = Field(
+    response_model: Annotated[
+        type[BaseModel] | None,
+        BeforeValidator(_validate_class_ref),
+        PlainSerializer(
+            _serialize_class_ref, return_type=str | None, when_used="json"
+        ),
+    ] = Field(
         description="A Pydantic model for structured LLM outputs using native provider features.",
         default=None,
     )
@@ -189,7 +260,13 @@ class Task(BaseModel):
         description="Whether the task should instruct the agent to return the final answer formatted in Markdown",
         default=False,
     )
-    converter_cls: type[Converter] | None = Field(
+    converter_cls: Annotated[
+        type[Converter] | None,
+        BeforeValidator(_validate_class_ref),
+        PlainSerializer(
+            _serialize_class_ref, return_type=str | None, when_used="json"
+        ),
+    ] = Field(
         description="A converter class used to export structured output",
         default=None,
     )
@@ -1052,6 +1129,27 @@ Follow these guidelines:
             tools=cloned_tools,
         )
 
+    def _normalize_agent_result(
+        self, result: Any
+    ) -> tuple[str, BaseModel | None, dict[str, Any] | None]:
+        """Convert an agent execution result into ``(raw, pydantic, json)``.
+
+        The agent may return either a string or a Pydantic model (when the
+        task uses ``output_pydantic``/``response_model`` and the LLM returned
+        a structured payload). ``TaskOutput.raw`` is typed as ``str`` so the
+        Pydantic model has to be serialized to JSON before it can be stored
+        on a ``TaskOutput`` (e.g. during a guardrail-triggered retry).
+        """
+        if isinstance(result, BaseModel):
+            raw = result.model_dump_json()
+            if self.output_pydantic:
+                return raw, result, None
+            if self.output_json:
+                return raw, None, result.model_dump()
+            return raw, None, None
+        pydantic_output, json_output = self._export_output(result)
+        return result, pydantic_output, json_output
+
     def _export_output(
         self, result: str
     ) -> tuple[BaseModel | None, dict[str, Any] | None]:
@@ -1241,12 +1339,12 @@ Follow these guidelines:
                 tools=tools,
             )
 
-            pydantic_output, json_output = self._export_output(result)
+            raw, pydantic_output, json_output = self._normalize_agent_result(result)
             task_output = TaskOutput(
                 name=self.name or self.description,
                 description=self.description,
                 expected_output=self.expected_output,
-                raw=result,
+                raw=raw,
                 pydantic=pydantic_output,
                 json_dict=json_output,
                 agent=agent.role,
@@ -1337,12 +1435,12 @@ Follow these guidelines:
                 tools=tools,
             )
 
-            pydantic_output, json_output = self._export_output(result)
+            raw, pydantic_output, json_output = self._normalize_agent_result(result)
             task_output = TaskOutput(
                 name=self.name or self.description,
                 description=self.description,
                 expected_output=self.expected_output,
-                raw=result,
+                raw=raw,
                 pydantic=pydantic_output,
                 json_dict=json_output,
                 agent=agent.role,
