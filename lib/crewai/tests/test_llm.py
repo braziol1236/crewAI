@@ -992,6 +992,104 @@ def test_validate_model_in_constants():
         is True
     )
 
+    # Bedrock Claude 4 cross-region inference profiles (issue #5549)
+    assert (
+        LLM._validate_model_in_constants(
+            "us.anthropic.claude-sonnet-4-5-20250929-v1:0", "bedrock"
+        )
+        is True
+    )
+    assert (
+        LLM._validate_model_in_constants(
+            "us.anthropic.claude-opus-4-20250514-v1:0", "bedrock"
+        )
+        is True
+    )
+    assert (
+        LLM._validate_model_in_constants(
+            "eu.anthropic.claude-sonnet-4-20250514-v1:0", "bedrock"
+        )
+        is True
+    )
+    assert (
+        LLM._validate_model_in_constants(
+            "apac.anthropic.claude-haiku-4-5-20251001-v1:0", "bedrock"
+        )
+        is True
+    )
+    assert (
+        LLM._validate_model_in_constants(
+            "global.anthropic.claude-sonnet-4-5-20250929-v1:0", "bedrock"
+        )
+        is True
+    )
+
+
+def test_bedrock_claude_4_models_in_constants():
+    """Claude 4 Bedrock models (direct IDs and cross-region inference profiles)
+    must be present in BEDROCK_MODELS so providers can be inferred correctly.
+
+    See issue #5549: Anthropic V4 models were missing from the Bedrock model list.
+    """
+    from crewai.llms.constants import BEDROCK_MODELS
+
+    # Direct Claude 4 model IDs
+    direct_models = [
+        "anthropic.claude-sonnet-4-20250514-v1:0",
+        "anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "anthropic.claude-opus-4-20250514-v1:0",
+        "anthropic.claude-opus-4-1-20250805-v1:0",
+        "anthropic.claude-opus-4-5-20251101-v1:0",
+        "anthropic.claude-haiku-4-5-20251001-v1:0",
+    ]
+    for model in direct_models:
+        assert model in BEDROCK_MODELS, (
+            f"Expected {model} to be listed in BEDROCK_MODELS"
+        )
+
+    # Cross-region inference profiles (required for invoking Claude 4 on Bedrock)
+    inference_profile_models = [
+        "us.anthropic.claude-sonnet-4-20250514-v1:0",
+        "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "us.anthropic.claude-opus-4-20250514-v1:0",
+        "us.anthropic.claude-opus-4-1-20250805-v1:0",
+        "us.anthropic.claude-opus-4-5-20251101-v1:0",
+        "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "eu.anthropic.claude-sonnet-4-20250514-v1:0",
+        "eu.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "apac.anthropic.claude-sonnet-4-20250514-v1:0",
+        "apac.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+    ]
+    for model in inference_profile_models:
+        assert model in BEDROCK_MODELS, (
+            f"Expected {model} to be listed in BEDROCK_MODELS"
+        )
+
+
+def test_infer_provider_for_bedrock_claude_4_models():
+    """Claude 4 Bedrock model IDs should be inferred as the 'bedrock' provider.
+
+    Before the fix for issue #5549, cross-region inference profile IDs (e.g.
+    'us.anthropic.claude-sonnet-4-5-20250929-v1:0') were not listed in
+    BEDROCK_MODELS, so ``_infer_provider_from_model`` incorrectly fell back to
+    the default 'openai' provider.
+    """
+    claude_4_bedrock_models = [
+        "anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "anthropic.claude-opus-4-1-20250805-v1:0",
+        "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "us.anthropic.claude-opus-4-20250514-v1:0",
+        "eu.anthropic.claude-sonnet-4-20250514-v1:0",
+        "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+    ]
+    for model in claude_4_bedrock_models:
+        assert LLM._infer_provider_from_model(model) == "bedrock", (
+            f"Expected provider for {model} to be inferred as 'bedrock'"
+        )
+
 @pytest.mark.vcr(record_mode="once",decode_compressed_response=True)
 def test_usage_info_non_streaming_with_call():
     llm = LLM(model="gpt-4o-mini", is_litellm=True)
