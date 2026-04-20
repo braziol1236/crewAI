@@ -197,9 +197,7 @@ class Task(BaseModel):
     output_json: Annotated[
         type[BaseModel] | None,
         BeforeValidator(_validate_class_ref),
-        PlainSerializer(
-            _serialize_class_ref, return_type=str | None, when_used="json"
-        ),
+        PlainSerializer(_serialize_class_ref, return_type=str | None, when_used="json"),
     ] = Field(
         description="A Pydantic model to be used to create a JSON output.",
         default=None,
@@ -207,9 +205,7 @@ class Task(BaseModel):
     output_pydantic: Annotated[
         type[BaseModel] | None,
         BeforeValidator(_validate_class_ref),
-        PlainSerializer(
-            _serialize_class_ref, return_type=str | None, when_used="json"
-        ),
+        PlainSerializer(_serialize_class_ref, return_type=str | None, when_used="json"),
     ] = Field(
         description="A Pydantic model to be used to create a Pydantic output.",
         default=None,
@@ -217,9 +213,7 @@ class Task(BaseModel):
     response_model: Annotated[
         type[BaseModel] | None,
         BeforeValidator(_validate_class_ref),
-        PlainSerializer(
-            _serialize_class_ref, return_type=str | None, when_used="json"
-        ),
+        PlainSerializer(_serialize_class_ref, return_type=str | None, when_used="json"),
     ] = Field(
         description="A Pydantic model for structured LLM outputs using native provider features.",
         default=None,
@@ -263,9 +257,7 @@ class Task(BaseModel):
     converter_cls: Annotated[
         type[Converter] | None,
         BeforeValidator(_validate_class_ref),
-        PlainSerializer(
-            _serialize_class_ref, return_type=str | None, when_used="json"
-        ),
+        PlainSerializer(_serialize_class_ref, return_type=str | None, when_used="json"),
     ] = Field(
         description="A converter class used to export structured output",
         default=None,
