@@ -213,7 +213,7 @@ class CrewEvaluator:
                     quality=quality_score,
                     execution_duration=current_task.execution_duration,
                     model=getattr(self.llm, "model", str(self.llm)),
-                    crew_name=self.crew.display_name,
+                    crew_name=self.crew.name,
                     crew=self.crew,
                 ),
             )

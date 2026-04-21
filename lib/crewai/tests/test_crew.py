@@ -4740,7 +4740,7 @@ def test_default_crew_name(researcher, writer):
             Task(description="Task 2", expected_output="output", agent=writer),
         ],
     )
-    assert crew.name is None
+    assert crew.name == "Crew"
 
 
 @pytest.mark.parametrize(

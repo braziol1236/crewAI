@@ -791,11 +791,7 @@ class TraceCollectionListener(BaseEventListener):
         if not self.batch_manager.is_batch_initialized():
             user_context = self._get_user_context()
             execution_metadata = {
-                "crew_name": (
-                    getattr(source, "display_name", None)
-                    or getattr(source, "name", None)
-                    or "Unknown Crew"
-                ),
+                "crew_name": getattr(source, "name", None) or "Unknown Crew",
                 "crewai_version": get_crewai_version(),
             }
             self._initialize_batch(user_context, execution_metadata)

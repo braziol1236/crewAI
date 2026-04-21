@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Coroutine, Iterable, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from opentelemetry import baggage
 
@@ -309,9 +309,10 @@ def prepare_kickoff(
             from crewai.events.utils.console_formatter import ConsoleFormatter
 
             fmt = ConsoleFormatter(verbose=True)
+            # `name` is guaranteed non-None by the `_resolve_name` validator.
             content = fmt.create_status_content(
                 "Resuming from Checkpoint",
-                crew.display_name,
+                cast(str, crew.name),
                 "bright_magenta",
                 ID=str(crew.id),
             )
@@ -320,7 +321,7 @@ def prepare_kickoff(
             )
     else:
         started_event = CrewKickoffStartedEvent(
-            crew_name=crew.display_name,
+            crew_name=crew.name,
             inputs=normalized,
         )
         crew._kickoff_event_id = started_event.event_id

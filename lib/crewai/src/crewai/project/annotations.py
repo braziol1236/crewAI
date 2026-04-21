@@ -238,8 +238,7 @@ def crew(
 
         crew_instance: Crew = _call_method(meth, self, *args, **kwargs)
 
-        if crew_instance.name is None:
-            crew_instance.name = getattr(self, "_crew_name", None)
+        crew_instance.name = getattr(self, "_crew_name", None) or crew_instance.name
 
         def callback_wrapper(
             hook: Callable[Concatenate[CrewInstance, P2], R2], instance: CrewInstance
