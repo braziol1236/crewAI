@@ -238,7 +238,11 @@ def crew(
 
         crew_instance: Crew = _call_method(meth, self, *args, **kwargs)
 
-        crew_instance.name = getattr(self, "_crew_name", None) or crew_instance.name
+        # Override only when the Crew's name is the auto-resolved class-name
+        # fallback, so an explicit `Crew(name=...)` inside the factory wins.
+        crewbase_name = getattr(self, "_crew_name", None)
+        if crewbase_name and crew_instance.name == type(crew_instance).__name__:
+            crew_instance.name = crewbase_name
 
         def callback_wrapper(
             hook: Callable[Concatenate[CrewInstance, P2], R2], instance: CrewInstance

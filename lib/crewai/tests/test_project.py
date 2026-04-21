@@ -268,6 +268,31 @@ def test_crew_decorator_propagates_class_name_to_instance():
     assert crew_instance.name == "InternalCrew"
 
 
+def test_crew_decorator_preserves_explicit_name():
+    """Explicit Crew(name=...) inside @crew should win over the @CrewBase class name."""
+    sample_agent = Agent(role="r", goal="g", backstory="b")
+    sample_task = Task(description="d", expected_output="o", agent=sample_agent)
+
+    @CrewBase
+    class NamedCrewFactory:
+        agents_config = None
+        tasks_config = None
+        agents: list[BaseAgent] = [sample_agent]
+        tasks: list[Task] = [sample_task]
+
+        @crew
+        def crew(self):
+            return Crew(
+                name="My Explicit Name",
+                agents=[sample_agent],
+                tasks=[sample_task],
+            )
+
+    factory_cls = cast(type[Any], NamedCrewFactory)
+    crew_instance: Crew = cast(Any, factory_cls()).crew()
+    assert crew_instance.name == "My Explicit Name"
+
+
 @tool
 def simple_tool():
     """Return 'Hi!'"""
