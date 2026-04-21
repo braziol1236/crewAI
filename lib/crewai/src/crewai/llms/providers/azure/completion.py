@@ -159,6 +159,9 @@ class AzureCompletion(BaseLLM):
             self._client = self._build_sync_client()
             self._async_client = self._build_async_client()
         except (ValueError, ImportError):
+            # Deferred initialization: client build is retried in
+            # _ensure_clients() before the first API call, so it is
+            # safe to suppress here when env vars are not yet set.
             pass
         return self
 
@@ -217,6 +220,13 @@ class AzureCompletion(BaseLLM):
     def _resolve_credential(self) -> AzureKeyCredential | TokenCredential:
         """Resolve the Azure credential using a priority chain.
 
+        Token-based credentials are checked first because the platform's
+        workload-identity manager sets env vars at runtime to enable
+        keyless auth.  When those vars are present they intentionally
+        take precedence over any static ``api_key`` so that enterprises
+        can enforce SP / Managed Identity policies.
+
+        Priority:
         1. OIDC federation (WorkloadIdentityCredential) — auto-discovered
            from AZURE_FEDERATED_TOKEN_FILE + AZURE_TENANT_ID + AZURE_CLIENT_ID
         2. Client secret (ClientSecretCredential) — explicit SP credentials
