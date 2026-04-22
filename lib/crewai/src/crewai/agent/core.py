@@ -29,7 +29,7 @@ from pydantic import (
     model_validator,
 )
 from pydantic.functional_serializers import PlainSerializer
-from typing_extensions import Self
+from typing_extensions import Self, TypeIs
 
 from crewai.agent.planning_config import PlanningConfig
 from crewai.agent.utils import (
@@ -78,8 +78,7 @@ from crewai.knowledge.knowledge import Knowledge
 from crewai.knowledge.source.base_knowledge_source import BaseKnowledgeSource
 from crewai.lite_agent_output import LiteAgentOutput
 from crewai.llms.base_llm import BaseLLM
-from crewai.mcp import MCPServerConfig
-from crewai.mcp.tool_resolver import MCPToolResolver
+from crewai.mcp.config import MCPServerConfig
 from crewai.rag.embeddings.types import EmbedderConfig
 from crewai.security.fingerprint import Fingerprint
 from crewai.skills.loader import activate_skill, discover_skills
@@ -119,6 +118,7 @@ if TYPE_CHECKING:
 
     from crewai.a2a.config import A2AClientConfig, A2AConfig, A2AServerConfig
     from crewai.agents.agent_builder.base_agent import PlatformAppOrAction
+    from crewai.mcp.tool_resolver import MCPToolResolver
     from crewai.task import Task
     from crewai.tools.base_tool import BaseTool
     from crewai.tools.structured_tool import CrewStructuredTool
@@ -131,6 +131,13 @@ _EXECUTOR_CLASS_MAP: dict[str, type] = {
     "CrewAgentExecutor": CrewAgentExecutor,
     "AgentExecutor": AgentExecutor,
 }
+
+
+def _is_resuming_agent_executor(
+    executor: CrewAgentExecutor | AgentExecutor | None,
+) -> TypeIs[AgentExecutor]:
+    """Type guard: True when the executor is resuming from a checkpoint."""
+    return isinstance(executor, AgentExecutor) and executor._resuming
 
 
 def _validate_executor_class(value: Any) -> Any:
@@ -1113,6 +1120,8 @@ class Agent(BaseAgent):
         Delegates to :class:`~crewai.mcp.tool_resolver.MCPToolResolver`.
         """
         self._cleanup_mcp_clients()
+        from crewai.mcp.tool_resolver import MCPToolResolver
+
         self._mcp_resolver = MCPToolResolver(agent=self, logger=self._logger)
         return self._mcp_resolver.resolve(mcps)
 
@@ -1366,24 +1375,42 @@ class Agent(BaseAgent):
 
         prompt, stop_words, rpm_limit_fn = self._build_execution_prompt(raw_tools)
 
-        executor = AgentExecutor(
-            llm=cast(BaseLLM, self.llm),
-            agent=self,
-            prompt=prompt,
-            max_iter=self.max_iter,
-            tools=parsed_tools,
-            tools_names=get_tool_names(parsed_tools),
-            stop_words=stop_words,
-            tools_description=render_text_description_and_args(parsed_tools),
-            tools_handler=self.tools_handler,
-            original_tools=raw_tools,
-            step_callback=self.step_callback,
-            function_calling_llm=self.function_calling_llm,
-            respect_context_window=self.respect_context_window,
-            request_within_rpm_limit=rpm_limit_fn,
-            callbacks=[TokenCalcHandler(self._token_process)],
-            response_model=response_format,
-        )
+        if _is_resuming_agent_executor(self.agent_executor):
+            executor = self.agent_executor
+            executor.tools = parsed_tools
+            executor.tools_names = get_tool_names(parsed_tools)
+            executor.tools_description = render_text_description_and_args(parsed_tools)
+            executor.original_tools = raw_tools
+            executor.prompt = prompt
+            executor.response_model = response_format
+            executor.stop_words = stop_words
+            executor.tools_handler = self.tools_handler
+            executor.step_callback = self.step_callback
+            executor.function_calling_llm = cast(
+                BaseLLM | None, self.function_calling_llm
+            )
+            executor.respect_context_window = self.respect_context_window
+            executor.request_within_rpm_limit = rpm_limit_fn
+            executor.callbacks = [TokenCalcHandler(self._token_process)]
+        else:
+            executor = AgentExecutor(
+                llm=cast(BaseLLM, self.llm),
+                agent=self,
+                prompt=prompt,
+                max_iter=self.max_iter,
+                tools=parsed_tools,
+                tools_names=get_tool_names(parsed_tools),
+                stop_words=stop_words,
+                tools_description=render_text_description_and_args(parsed_tools),
+                tools_handler=self.tools_handler,
+                original_tools=raw_tools,
+                step_callback=self.step_callback,
+                function_calling_llm=self.function_calling_llm,
+                respect_context_window=self.respect_context_window,
+                request_within_rpm_limit=rpm_limit_fn,
+                callbacks=[TokenCalcHandler(self._token_process)],
+                response_model=response_format,
+            )
 
         all_files: dict[str, Any] = {}
         if isinstance(messages, str):
@@ -1504,14 +1531,17 @@ class Agent(BaseAgent):
         )
 
         try:
-            crewai_event_bus.emit(
-                self,
-                event=LiteAgentExecutionStartedEvent(
+            if self.checkpoint_kickoff_event_id is not None:
+                self._kickoff_event_id = self.checkpoint_kickoff_event_id
+                self.checkpoint_kickoff_event_id = None
+            else:
+                started_event = LiteAgentExecutionStartedEvent(
                     agent_info=agent_info,
                     tools=parsed_tools,
                     messages=messages,
-                ),
-            )
+                )
+                crewai_event_bus.emit(self, event=started_event)
+                self._kickoff_event_id = started_event.event_id
 
             output = self._execute_and_build_output(executor, inputs, response_format)
             return self._finalize_kickoff(
@@ -1808,14 +1838,17 @@ class Agent(BaseAgent):
         )
 
         try:
-            crewai_event_bus.emit(
-                self,
-                event=LiteAgentExecutionStartedEvent(
+            if self.checkpoint_kickoff_event_id is not None:
+                self._kickoff_event_id = self.checkpoint_kickoff_event_id
+                self.checkpoint_kickoff_event_id = None
+            else:
+                started_event = LiteAgentExecutionStartedEvent(
                     agent_info=agent_info,
                     tools=parsed_tools,
                     messages=messages,
-                ),
-            )
+                )
+                crewai_event_bus.emit(self, event=started_event)
+                self._kickoff_event_id = started_event.event_id
 
             output = await self._execute_and_build_output_async(
                 executor, inputs, response_format
