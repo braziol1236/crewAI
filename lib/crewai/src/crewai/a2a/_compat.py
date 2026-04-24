@@ -195,7 +195,9 @@ def agent_card_interfaces(agent_card: AgentCard) -> list[AgentInterface]:
     ``agent_card.additional_interfaces``.
     In v1.0 everything is in ``supported_interfaces``.
     """
-    return list(agent_card.supported_interfaces) if agent_card.supported_interfaces else []
+    return (
+        list(agent_card.supported_interfaces) if agent_card.supported_interfaces else []
+    )
 
 
 def agent_card_protocol_version(agent_card: AgentCard) -> str:
@@ -266,7 +268,8 @@ def create_client_config(
         supported_protocol_bindings=supported_transports or ["JSONRPC"],
         streaming=streaming,
         polling=polling,
-        accepted_output_modes=accepted_output_modes or ["text/plain", "application/json"],
+        accepted_output_modes=accepted_output_modes
+        or ["text/plain", "application/json"],
         push_notification_config=push_notification_config,
         grpc_channel_factory=grpc_channel_factory,
     )

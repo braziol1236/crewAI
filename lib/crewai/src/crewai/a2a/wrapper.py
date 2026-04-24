@@ -995,7 +995,9 @@ def _init_delegation_state(
         reference_task_ids=list(ctx.reference_task_ids),
         conversation_history=[],
         agent_card=current_agent_card,
-        agent_card_dict=agent_card_to_dict(current_agent_card) if current_agent_card else None,
+        agent_card_dict=agent_card_to_dict(current_agent_card)
+        if current_agent_card
+        else None,
         agent_name=current_agent_card.name if current_agent_card else None,
     )
 
@@ -1326,7 +1328,10 @@ def _delegate_to_a2a(
                 if latest_message.context_id is not None:
                     context_id = latest_message.context_id
 
-            if a2a_result["status"] in [TASK_STATE_COMPLETED, TASK_STATE_INPUT_REQUIRED]:
+            if a2a_result["status"] in [
+                TASK_STATE_COMPLETED,
+                TASK_STATE_INPUT_REQUIRED,
+            ]:
                 trusted_result, task_id, reference_task_ids, remote_notice = (
                     _handle_task_completion(
                         a2a_result,
@@ -1681,7 +1686,10 @@ async def _adelegate_to_a2a(
                 if latest_message.context_id is not None:
                     context_id = latest_message.context_id
 
-            if a2a_result["status"] in [TASK_STATE_COMPLETED, TASK_STATE_INPUT_REQUIRED]:
+            if a2a_result["status"] in [
+                TASK_STATE_COMPLETED,
+                TASK_STATE_INPUT_REQUIRED,
+            ]:
                 trusted_result, task_id, reference_task_ids, remote_notice = (
                     _handle_task_completion(
                         a2a_result,

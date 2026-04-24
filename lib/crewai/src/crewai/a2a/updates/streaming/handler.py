@@ -68,9 +68,7 @@ def _extract_text_from_artifact(artifact: TaskArtifactUpdateEvent) -> list[str]:
     parts: list[str] = []
     if artifact.artifact and artifact.artifact.parts:
         parts.extend(
-            part_text(part)
-            for part in artifact.artifact.parts
-            if part_is_text(part)
+            part_text(part) for part in artifact.artifact.parts if part_is_text(part)
         )
     return parts
 
@@ -171,7 +169,9 @@ class StreamingHandler:
 
                         if is_stream_status_update(chunk):
                             update = chunk.status_update
-                            is_final_update = process_status_update(update, result_parts)
+                            is_final_update = process_status_update(
+                                update, result_parts
+                            )
 
                             if (
                                 is_final_update
@@ -352,9 +352,8 @@ class StreamingHandler:
                                 for p in artifact.parts
                             )
                         effective_context_id = (
-                            (current_task.context_id if current_task else None)
-                            or params.context_id
-                        )
+                            current_task.context_id if current_task else None
+                        ) or params.context_id
                         crewai_event_bus.emit(
                             agent_branch,
                             A2AArtifactReceivedEvent(
@@ -362,7 +361,9 @@ class StreamingHandler:
                                 artifact_id=artifact.artifact_id,
                                 artifact_name=artifact.name,
                                 artifact_description=artifact.description,
-                                mime_type="text" if artifact.parts and part_is_text(artifact.parts[0]) else None,
+                                mime_type="text"
+                                if artifact.parts and part_is_text(artifact.parts[0])
+                                else None,
                                 size_bytes=artifact_size,
                                 append=artifact_update.append or False,
                                 last_chunk=artifact_update.last_chunk or False,

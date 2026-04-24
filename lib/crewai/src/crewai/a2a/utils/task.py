@@ -416,7 +416,9 @@ async def _execute_impl(
             )
         result_str = str(result)
         history: list[Message] = [context.message] if context.message else []
-        history.append(new_agent_text_message(result_str, context_id=context_id, task_id=task_id))
+        history.append(
+            new_agent_text_message(result_str, context_id=context_id, task_id=task_id)
+        )
         await event_queue.enqueue_event(
             A2ATask(
                 id=task_id,

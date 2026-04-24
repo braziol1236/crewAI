@@ -101,17 +101,13 @@ def extract_task_result_parts(a2a_task: A2ATask) -> list[str]:
 
     if a2a_task.status and a2a_task.status.message:
         msg = a2a_task.status.message
-        result_parts.extend(
-            part_text(part) for part in msg.parts if part_is_text(part)
-        )
+        result_parts.extend(part_text(part) for part in msg.parts if part_is_text(part))
 
     if not result_parts and a2a_task.history:
         for history_msg in reversed(a2a_task.history):
             if history_msg.role == ROLE_AGENT:
                 result_parts.extend(
-                    part_text(part)
-                    for part in history_msg.parts
-                    if part_is_text(part)
+                    part_text(part) for part in history_msg.parts if part_is_text(part)
                 )
                 break
 

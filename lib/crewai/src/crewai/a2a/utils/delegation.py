@@ -116,11 +116,13 @@ def _create_file_parts(input_files: dict[str, Any] | None) -> list[Part]:
     parts: list[Part] = []
     for name, file_input in input_files.items():
         content_bytes = file_input.read()
-        parts.append(Part(
-            raw=content_bytes,
-            media_type=file_input.content_type or "application/octet-stream",
-            filename=file_input.filename or name,
-        ))
+        parts.append(
+            Part(
+                raw=content_bytes,
+                media_type=file_input.content_type or "application/octet-stream",
+                filename=file_input.filename or name,
+            )
+        )
 
     return parts
 
@@ -463,7 +465,8 @@ async def _aexecute_a2a_delegation_impl(
                 "endpoint": endpoint,
                 "client_transports": client_transports,
                 "server_transports": [
-                    iface.protocol_binding for iface in agent_card_interfaces(agent_card)
+                    iface.protocol_binding
+                    for iface in agent_card_interfaces(agent_card)
                 ],
             },
         )
@@ -952,7 +955,8 @@ async def _create_a2a_client(
             supported_transports=[transport_protocol],
             streaming=streaming and not use_polling,
             polling=use_polling,
-            accepted_output_modes=accepted_output_modes or list(DEFAULT_CLIENT_OUTPUT_MODES),
+            accepted_output_modes=accepted_output_modes
+            or list(DEFAULT_CLIENT_OUTPUT_MODES),
             push_notification_config=push_config,
             grpc_channel_factory=grpc_channel_factory,
         )

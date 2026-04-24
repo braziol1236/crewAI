@@ -12,7 +12,11 @@ from typing import Final, Literal
 
 from a2a.types import AgentCard, AgentInterface
 
-from crewai.a2a._compat import agent_card_interfaces, agent_card_preferred_transport, agent_card_url
+from crewai.a2a._compat import (
+    agent_card_interfaces,
+    agent_card_preferred_transport,
+    agent_card_url,
+)
 from crewai.events.event_bus import crewai_event_bus
 from crewai.events.types.a2a_events import A2ATransportNegotiatedEvent
 
@@ -166,7 +170,9 @@ def negotiate_transport(
             source="client_preferred",
         )
     else:
-        server_preferred = (agent_card_preferred_transport(agent_card) or JSONRPC_TRANSPORT).upper()
+        server_preferred = (
+            agent_card_preferred_transport(agent_card) or JSONRPC_TRANSPORT
+        ).upper()
         if (
             server_preferred in client_transports
             and server_preferred in transport_to_interface
