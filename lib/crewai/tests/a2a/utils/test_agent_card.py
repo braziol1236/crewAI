@@ -5,6 +5,7 @@ from __future__ import annotations
 from a2a.types import AgentCard, AgentSkill
 
 from crewai import Agent
+from crewai.a2a._compat import agent_card_to_dict, agent_card_url, proto_to_json
 from crewai.a2a.config import A2AClientConfig, A2AServerConfig
 from crewai.a2a.utils.agent_card import inject_a2a_server_methods
 
@@ -154,7 +155,7 @@ class TestToAgentCard:
 
         card = agent.to_agent_card("http://my-server.com:9000")
 
-        assert card.url == "http://my-server.com:9000"
+        assert agent_card_url(card) == "http://my-server.com:9000"
 
     def test_uses_server_config_url(self) -> None:
         """AgentCard url should prefer A2AServerConfig.url over provided URL."""
@@ -167,7 +168,7 @@ class TestToAgentCard:
 
         card = agent.to_agent_card("http://fallback-url.com")
 
-        assert card.url == "http://configured-url.com/"
+        assert agent_card_url(card) == "http://configured-url.com"
 
     def test_generates_default_skill(self) -> None:
         """AgentCard should have at least one skill based on agent role."""
@@ -246,16 +247,16 @@ class TestAgentCardJsonStructure:
         )
 
         card = agent.to_agent_card("http://localhost:8000")
-        json_data = card.model_dump()
+        json_data = agent_card_to_dict(card)
 
         assert "name" in json_data
         assert "description" in json_data
-        assert "url" in json_data
+        assert "supported_interfaces" in json_data
         assert "version" in json_data
         assert "skills" in json_data
         assert "capabilities" in json_data
-        assert "defaultInputModes" in json_data
-        assert "defaultOutputModes" in json_data
+        assert "default_input_modes" in json_data
+        assert "default_output_modes" in json_data
 
     def test_json_skills_structure(self) -> None:
         """Each skill in JSON should have required fields."""
@@ -267,7 +268,7 @@ class TestAgentCardJsonStructure:
         )
 
         card = agent.to_agent_card("http://localhost:8000")
-        json_data = card.model_dump()
+        json_data = agent_card_to_dict(card)
 
         assert len(json_data["skills"]) >= 1
         skill = json_data["skills"][0]
@@ -286,11 +287,11 @@ class TestAgentCardJsonStructure:
         )
 
         card = agent.to_agent_card("http://localhost:8000")
-        json_data = card.model_dump()
+        json_data = agent_card_to_dict(card)
 
         capabilities = json_data["capabilities"]
         assert "streaming" in capabilities
-        assert "pushNotifications" in capabilities
+        assert "push_notifications" in capabilities
 
     def test_json_serializable(self) -> None:
         """AgentCard should be JSON serializable."""
@@ -302,14 +303,14 @@ class TestAgentCardJsonStructure:
         )
 
         card = agent.to_agent_card("http://localhost:8000")
-        json_str = card.model_dump_json()
+        json_str = proto_to_json(card)
 
         assert isinstance(json_str, str)
         assert "Test Agent" in json_str
         assert "http://localhost:8000" in json_str
 
     def test_json_excludes_none_values(self) -> None:
-        """AgentCard JSON with exclude_none should omit None fields."""
+        """AgentCard JSON with exclude_none should omit None/default fields."""
         agent = Agent(
             role="Test Agent",
             goal="Test goal",
@@ -318,8 +319,8 @@ class TestAgentCardJsonStructure:
         )
 
         card = agent.to_agent_card("http://localhost:8000")
-        json_data = card.model_dump(exclude_none=True)
+        json_data = agent_card_to_dict(card)
 
         assert "provider" not in json_data
-        assert "documentationUrl" not in json_data
-        assert "iconUrl" not in json_data
+        assert "documentation_url" not in json_data
+        assert "icon_url" not in json_data

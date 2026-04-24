@@ -17,6 +17,16 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 from a2a.types import Role, TaskState
 from pydantic import BaseModel, ValidationError
 
+from crewai.a2a._compat import (
+    ROLE_AGENT,
+    ROLE_USER,
+    TASK_STATE_COMPLETED,
+    TASK_STATE_INPUT_REQUIRED,
+    agent_card_to_dict,
+    part_is_text,
+    part_text,
+    proto_to_json,
+)
 from crewai.a2a.config import A2AClientConfig, A2AConfig
 from crewai.a2a.extensions.base import (
     A2AExtension,
@@ -681,7 +691,7 @@ def _augment_prompt_with_a2a(
                 }
                 agents_text += f"\n{json.dumps(filtered, indent=2)}\n"
             else:
-                agents_text += f"\n{card.model_dump_json(indent=2, exclude_none=True, include={'description', 'url', 'skills'})}\n"
+                agents_text += f"\n{proto_to_json(card)}\n"
 
     failed_agents = failed_agents or {}
     if failed_agents:
@@ -695,7 +705,7 @@ def _augment_prompt_with_a2a(
 
     if conversation_history:
         for msg in conversation_history:
-            history_text += f"\n{msg.model_dump_json(indent=2, exclude_none=True, exclude={'message_id'})}\n"
+            history_text += f"\n{proto_to_json(msg)}\n"
 
     history_text = PREVIOUS_A2A_CONVERSATION_TEMPLATE.substitute(
         previous_a2a_conversation=history_text
@@ -780,9 +790,9 @@ def _handle_max_turns_exceeded(
     """
     if conversation_history:
         for msg in reversed(conversation_history):
-            if msg.role == Role.agent:
+            if msg.role == ROLE_AGENT:
                 text_parts = [
-                    part.root.text for part in msg.parts if part.root.kind == "text"
+                    part_text(part) for part in msg.parts if part_is_text(part)
                 ]
                 final_message = (
                     " ".join(text_parts) if text_parts else "Conversation completed"
@@ -985,7 +995,7 @@ def _init_delegation_state(
         reference_task_ids=list(ctx.reference_task_ids),
         conversation_history=[],
         agent_card=current_agent_card,
-        agent_card_dict=current_agent_card.model_dump() if current_agent_card else None,
+        agent_card_dict=agent_card_to_dict(current_agent_card) if current_agent_card else None,
         agent_name=current_agent_card.name if current_agent_card else None,
     )
 
@@ -1110,7 +1120,7 @@ def _handle_task_completion(
         - remote_notice: Template notice about remote agent response
     """
     remote_notice = ""
-    if a2a_result["status"] == TaskState.completed:
+    if a2a_result["status"] == TASK_STATE_COMPLETED:
         remote_notice = REMOTE_AGENT_RESPONSE_NOTICE
 
         if task_id_config is not None and task_id_config not in reference_task_ids:
@@ -1294,7 +1304,7 @@ def _delegate_to_a2a(
                 extensions=ctx.extensions,
                 conversation_history=conversation_history,
                 agent_id=ctx.agent_id,
-                agent_role=Role.user,
+                agent_role=ROLE_USER,
                 agent_branch=agent_branch,
                 response_model=ctx.agent_config.response_model,
                 turn_number=turn_num + 1,
@@ -1316,7 +1326,7 @@ def _delegate_to_a2a(
                 if latest_message.context_id is not None:
                     context_id = latest_message.context_id
 
-            if a2a_result["status"] in [TaskState.completed, TaskState.input_required]:
+            if a2a_result["status"] in [TASK_STATE_COMPLETED, TASK_STATE_INPUT_REQUIRED]:
                 trusted_result, task_id, reference_task_ids, remote_notice = (
                     _handle_task_completion(
                         a2a_result,
@@ -1649,7 +1659,7 @@ async def _adelegate_to_a2a(
                 extensions=ctx.extensions,
                 conversation_history=conversation_history,
                 agent_id=ctx.agent_id,
-                agent_role=Role.user,
+                agent_role=ROLE_USER,
                 agent_branch=agent_branch,
                 response_model=ctx.agent_config.response_model,
                 turn_number=turn_num + 1,
@@ -1671,7 +1681,7 @@ async def _adelegate_to_a2a(
                 if latest_message.context_id is not None:
                     context_id = latest_message.context_id
 
-            if a2a_result["status"] in [TaskState.completed, TaskState.input_required]:
+            if a2a_result["status"] in [TASK_STATE_COMPLETED, TASK_STATE_INPUT_REQUIRED]:
                 trusted_result, task_id, reference_task_ids, remote_notice = (
                     _handle_task_completion(
                         a2a_result,

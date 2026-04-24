@@ -15,15 +15,24 @@ import uuid
 from a2a.client import Client, ClientConfig, ClientFactory
 from a2a.types import (
     AgentCard,
-    FilePart,
-    FileWithBytes,
     Message,
     Part,
-    PushNotificationConfig as A2APushNotificationConfig,
     Role,
-    TextPart,
+    TaskPushNotificationConfig,
 )
 import httpx
+
+from crewai.a2a._compat import (
+    ROLE_USER,
+    agent_card_interfaces,
+    agent_card_preferred_transport,
+    agent_card_protocol_version,
+    agent_card_to_dict,
+    agent_card_url,
+    create_client_config,
+    new_text_part,
+    proto_copy,
+)
 from pydantic import BaseModel
 
 from crewai.a2a.auth.client_schemes import APIKeyAuth, HTTPDigestAuth
@@ -107,13 +116,11 @@ def _create_file_parts(input_files: dict[str, Any] | None) -> list[Part]:
     parts: list[Part] = []
     for name, file_input in input_files.items():
         content_bytes = file_input.read()
-        content_base64 = base64.b64encode(content_bytes).decode()
-        file_with_bytes = FileWithBytes(
-            bytes=content_base64,
-            mimeType=file_input.content_type,
-            name=file_input.filename or name,
-        )
-        parts.append(Part(root=FilePart(file=file_with_bytes)))
+        parts.append(Part(
+            raw=content_bytes,
+            media_type=file_input.content_type or "application/octet-stream",
+            filename=file_input.filename or name,
+        ))
 
     return parts
 
@@ -301,7 +308,7 @@ async def aexecute_a2a_delegation(
 
     is_multiturn = len(conversation_history) > 0
     if turn_number is None:
-        turn_number = len([m for m in conversation_history if m.role == Role.user]) + 1
+        turn_number = len([m for m in conversation_history if m.role == ROLE_USER]) + 1
 
     try:
         result = await _aexecute_a2a_delegation_impl(
@@ -349,7 +356,7 @@ async def aexecute_a2a_delegation(
         )
         raise
 
-    agent_card_data = result.get("agent_card")
+    agent_card_data: dict[str, Any] | None = result.get("agent_card")
     crewai_event_bus.emit(
         agent_branch,
         A2ADelegationCompletedEvent(
@@ -423,14 +430,14 @@ async def _aexecute_a2a_delegation_impl(
 
     unsupported_exts = validate_required_extensions(agent_card, client_extensions)
     if unsupported_exts:
-        ext_uris = [ext.uri for ext in unsupported_exts]
+        ext_uris = [e.uri for e in unsupported_exts]
         raise ValueError(
             f"Agent requires extensions not supported by client: {ext_uris}"
         )
 
     negotiated: NegotiatedTransport | None = None
     effective_transport: TransportType = transport.preferred or _DEFAULT_TRANSPORT
-    effective_url = endpoint
+    effective_url = agent_card_url(agent_card) or endpoint
 
     client_transports: list[str] = (
         list(transport.supported) if transport.supported else [_DEFAULT_TRANSPORT]
@@ -456,9 +463,8 @@ async def _aexecute_a2a_delegation_impl(
                 "endpoint": endpoint,
                 "client_transports": client_transports,
                 "server_transports": [
-                    iface.transport for iface in agent_card.additional_interfaces or []
-                ]
-                + [agent_card.preferred_transport or "JSONRPC"],
+                    iface.protocol_binding for iface in agent_card_interfaces(agent_card)
+                ],
             },
         )
 
@@ -476,11 +482,9 @@ async def _aexecute_a2a_delegation_impl(
 
     headers, _ = await _prepare_auth_headers(auth, timeout)
 
-    a2a_agent_name = None
-    if agent_card.name:
-        a2a_agent_name = agent_card.name
+    a2a_agent_name = agent_card.name or None
 
-    agent_card_dict = agent_card.model_dump(exclude_none=True)
+    agent_card_dict = agent_card_to_dict(agent_card)
     crewai_event_bus.emit(
         agent_branch,
         A2ADelegationStartedEvent(
@@ -492,7 +496,7 @@ async def _aexecute_a2a_delegation_impl(
             turn_number=turn_number,
             a2a_agent_name=a2a_agent_name,
             agent_card=agent_card_dict,
-            protocol_version=agent_card.protocol_version,
+            protocol_version=agent_card_protocol_version(agent_card),
             provider=agent_card_dict.get("provider"),
             skill_id=skill_id,
             metadata=metadata,
@@ -512,7 +516,7 @@ async def _aexecute_a2a_delegation_impl(
                 context_id=context_id,
                 a2a_agent_name=a2a_agent_name,
                 agent_card=agent_card_dict,
-                protocol_version=agent_card.protocol_version,
+                protocol_version=agent_card_protocol_version(agent_card),
                 provider=agent_card_dict.get("provider"),
                 skill_id=skill_id,
                 reference_task_ids=reference_task_ids,
@@ -534,26 +538,18 @@ async def _aexecute_a2a_delegation_impl(
         if first_task_id := conversation_history[0].task_id:
             task_id = first_task_id
 
-    parts: PartsDict = {"text": message_text}
-    if response_model:
-        parts.update(
-            {
-                "metadata": PartsMetadataDict(
-                    mimeType="application/json",
-                    schema=response_model.model_json_schema(),
-                )
-            }
-        )
-
     message_metadata = metadata.copy() if metadata else {}
     if skill_id:
         message_metadata["skill_id"] = skill_id
+    if response_model:
+        message_metadata["mimeType"] = "application/json"
+        message_metadata["schema"] = response_model.model_json_schema()
 
-    parts_list: list[Part] = [Part(root=TextPart(**parts))]
+    parts_list: list[Part] = [new_text_part(message_text)]
     parts_list.extend(_create_file_parts(input_files))
 
     message = Message(
-        role=Role.user,
+        role=ROLE_USER,
         message_id=str(uuid.uuid4()),
         parts=parts_list,
         context_id=context_id,
@@ -625,8 +621,11 @@ async def _aexecute_a2a_delegation_impl(
     use_streaming = not use_polling and push_config_for_client is None
 
     client_agent_card = agent_card
-    if effective_url != agent_card.url:
-        client_agent_card = agent_card.model_copy(update={"url": effective_url})
+    card_url = agent_card_url(agent_card)
+    if effective_url != card_url:
+        client_agent_card = proto_copy(agent_card)
+        if client_agent_card.supported_interfaces:
+            client_agent_card.supported_interfaces[0].url = effective_url
 
     async with _create_a2a_client(
         agent_card=client_agent_card,
@@ -649,7 +648,7 @@ async def _aexecute_a2a_delegation_impl(
             **handler_kwargs,
         )
         result["a2a_agent_name"] = a2a_agent_name
-        result["agent_card"] = agent_card.model_dump(exclude_none=True)
+        result["agent_card"] = agent_card_to_dict(agent_card)
         return result
 
 
@@ -933,15 +932,12 @@ async def _create_a2a_client(
         if auth and isinstance(auth, (HTTPDigestAuth, APIKeyAuth)):
             configure_auth_client(auth, httpx_client)
 
-        push_configs: list[A2APushNotificationConfig] = []
+        push_config: TaskPushNotificationConfig | None = None
         if push_notification_config is not None:
-            push_configs.append(
-                A2APushNotificationConfig(
-                    url=str(push_notification_config.url),
-                    id=push_notification_config.id,
-                    token=push_notification_config.token,
-                    authentication=push_notification_config.authentication,
-                )
+            push_config = TaskPushNotificationConfig(
+                url=str(push_notification_config.url),
+                id=push_notification_config.id or "",
+                token=push_notification_config.token or "",
             )
 
         grpc_channel_factory = None
@@ -951,13 +947,13 @@ async def _create_a2a_client(
                 auth=auth,
             )
 
-        config = ClientConfig(
+        config = create_client_config(
             httpx_client=httpx_client,
             supported_transports=[transport_protocol],
             streaming=streaming and not use_polling,
             polling=use_polling,
-            accepted_output_modes=accepted_output_modes or DEFAULT_CLIENT_OUTPUT_MODES,  # type: ignore[arg-type]
-            push_notification_configs=push_configs,
+            accepted_output_modes=accepted_output_modes or list(DEFAULT_CLIENT_OUTPUT_MODES),
+            push_notification_config=push_config,
             grpc_channel_factory=grpc_channel_factory,
         )
 
@@ -965,6 +961,6 @@ async def _create_a2a_client(
         client = factory.create(agent_card)
 
         if client_extensions:
-            await client.add_request_middleware(ExtensionsMiddleware(client_extensions))
+            await client.add_interceptor(ExtensionsMiddleware(client_extensions))
 
         yield client

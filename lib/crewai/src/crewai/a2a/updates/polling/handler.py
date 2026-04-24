@@ -8,15 +8,20 @@ from typing import TYPE_CHECKING, Any
 import uuid
 
 from a2a.client import Client
-from a2a.client.errors import A2AClientHTTPError
+from a2a.client.errors import A2AClientError
 from a2a.types import (
     AgentCard,
+    GetTaskRequest,
     Message,
     Part,
     Role,
-    TaskQueryParams,
     TaskState,
-    TextPart,
+)
+
+from crewai.a2a._compat import (
+    ROLE_AGENT,
+    TASK_STATE_FAILED,
+    new_text_message,
 )
 from typing_extensions import Unpack
 
@@ -84,7 +89,7 @@ async def _poll_task_until_complete(
     while True:
         poll_count += 1
         task = await client.get_task(
-            TaskQueryParams(id=task_id, history_length=history_length)
+            GetTaskRequest(id=task_id, history_length=history_length)
         )
 
         elapsed = time.monotonic() - start_time
@@ -94,7 +99,7 @@ async def _poll_task_until_complete(
             A2APollingStatusEvent(
                 task_id=task_id,
                 context_id=effective_context_id,
-                state=str(task.status.state.value),
+                state=str(task.status.state),
                 elapsed_seconds=elapsed,
                 poll_count=poll_count,
                 endpoint=endpoint,
@@ -222,7 +227,7 @@ class PollingHandler:
                 return result
 
             return TaskStateResult(
-                status=TaskState.failed,
+                status=TASK_STATE_FAILED,
                 error=f"Unexpected task state: {final_task.status.state}",
                 history=new_messages,
             )
@@ -230,10 +235,9 @@ class PollingHandler:
         except A2APollingTimeoutError as e:
             error_msg = str(e)
 
-            error_message = Message(
-                role=Role.agent,
-                message_id=str(uuid.uuid4()),
-                parts=[Part(root=TextPart(text=error_msg))],
+            error_message = new_text_message(
+                error_msg,
+                role=ROLE_AGENT,
                 context_id=context_id,
                 task_id=task_id,
             )
@@ -256,18 +260,17 @@ class PollingHandler:
                 ),
             )
             return TaskStateResult(
-                status=TaskState.failed,
+                status=TASK_STATE_FAILED,
                 error=error_msg,
                 history=new_messages,
             )
 
-        except A2AClientHTTPError as e:
-            error_msg = f"HTTP Error {e.status_code}: {e!s}"
+        except A2AClientError as e:
+            error_msg = f"A2A Client Error: {e!s}"
 
-            error_message = Message(
-                role=Role.agent,
-                message_id=str(uuid.uuid4()),
-                parts=[Part(root=TextPart(text=error_msg))],
+            error_message = new_text_message(
+                error_msg,
+                role=ROLE_AGENT,
                 context_id=context_id,
                 task_id=task_id,
             )
@@ -278,8 +281,7 @@ class PollingHandler:
                 A2AConnectionErrorEvent(
                     endpoint=endpoint,
                     error=str(e),
-                    error_type="http_error",
-                    status_code=e.status_code,
+                    error_type="client_error",
                     a2a_agent_name=a2a_agent_name,
                     operation="polling",
                     context_id=context_id,
@@ -305,7 +307,7 @@ class PollingHandler:
                 ),
             )
             return TaskStateResult(
-                status=TaskState.failed,
+                status=TASK_STATE_FAILED,
                 error=error_msg,
                 history=new_messages,
             )
@@ -313,10 +315,9 @@ class PollingHandler:
         except Exception as e:
             error_msg = f"Unexpected error during polling: {e!s}"
 
-            error_message = Message(
-                role=Role.agent,
-                message_id=str(uuid.uuid4()),
-                parts=[Part(root=TextPart(text=error_msg))],
+            error_message = new_text_message(
+                error_msg,
+                role=ROLE_AGENT,
                 context_id=context_id,
                 task_id=task_id,
             )
@@ -353,7 +354,7 @@ class PollingHandler:
                 ),
             )
             return TaskStateResult(
-                status=TaskState.failed,
+                status=TASK_STATE_FAILED,
                 error=error_msg,
                 history=new_messages,
             )

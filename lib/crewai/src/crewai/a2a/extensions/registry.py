@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from a2a.client.middleware import ClientCallContext, ClientCallInterceptor
+from a2a.client.interceptors import BeforeArgs, ClientCallInterceptor
 from a2a.extensions.common import (
     HTTP_EXTENSION_HEADER,
 )
@@ -63,30 +63,15 @@ class ExtensionsMiddleware(ClientCallInterceptor):
         """
         self._extensions = extensions
 
-    async def intercept(
-        self,
-        method_name: str,
-        request_payload: dict[str, Any],
-        http_kwargs: dict[str, Any],
-        agent_card: AgentCard | None,
-        context: ClientCallContext | None,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Add extensions header to the request.
+    async def before(self, args: BeforeArgs) -> None:
+        """Add extensions header before the request is sent.
 
         Args:
-            method_name: The A2A method being called.
-            request_payload: The JSON-RPC request payload.
-            http_kwargs: HTTP request kwargs (headers, etc).
-            agent_card: The target agent's card.
-            context: Optional call context.
-
-        Returns:
-            Tuple of (request_payload, modified_http_kwargs).
+            args: The BeforeArgs containing method, input, agent_card, etc.
         """
-        if self._extensions:
-            headers = http_kwargs.setdefault("headers", {})
-            headers[HTTP_EXTENSION_HEADER] = ",".join(self._extensions)
-        return request_payload, http_kwargs
+        if self._extensions and isinstance(args.input, dict):
+            metadata = args.input.setdefault("metadata", {})
+            metadata[HTTP_EXTENSION_HEADER] = ",".join(self._extensions)
 
 
 def validate_required_extensions(

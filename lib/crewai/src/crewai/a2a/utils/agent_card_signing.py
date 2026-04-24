@@ -18,6 +18,7 @@ import logging
 from typing import Any, Literal
 
 from a2a.types import AgentCard, AgentCardSignature
+from google.protobuf.json_format import MessageToDict
 import jwt
 from pydantic import SecretStr
 
@@ -58,7 +59,11 @@ def _serialize_agent_card(agent_card: AgentCard) -> str:
     Returns:
         Canonical JSON string representation.
     """
-    card_dict = agent_card.model_dump(exclude={"signatures"}, exclude_none=True)
+    card_dict = MessageToDict(
+        agent_card,
+        preserving_proto_field_name=True,
+    )
+    card_dict.pop("signatures", None)
     return json.dumps(card_dict, sort_keys=True, separators=(",", ":"))
 
 

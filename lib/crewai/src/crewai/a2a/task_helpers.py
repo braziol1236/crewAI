@@ -6,20 +6,40 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 import uuid
 
-from a2a.client.errors import A2AClientHTTPError
+from a2a.client.errors import A2AClientError
 from a2a.types import (
     AgentCard,
     Message,
     Part,
     Role,
+    StreamResponse,
     Task,
     TaskArtifactUpdateEvent,
     TaskState,
     TaskStatusUpdateEvent,
-    TextPart,
 )
 from typing_extensions import NotRequired, TypedDict
 
+from crewai.a2a._compat import (
+    ROLE_AGENT,
+    TASK_STATE_AUTH_REQUIRED,
+    TASK_STATE_CANCELED,
+    TASK_STATE_COMPLETED,
+    TASK_STATE_FAILED,
+    TASK_STATE_INPUT_REQUIRED,
+    TASK_STATE_REJECTED,
+    TASK_STATE_SUBMITTED,
+    TASK_STATE_WORKING,
+    agent_card_to_dict,
+    is_stream_artifact_update,
+    is_stream_message,
+    is_stream_status_update,
+    is_stream_task,
+    new_text_message,
+    new_text_part,
+    part_is_text,
+    part_text,
+)
 from crewai.events.event_bus import crewai_event_bus
 from crewai.events.types.a2a_events import (
     A2AConnectionErrorEvent,
@@ -30,31 +50,29 @@ from crewai.events.types.a2a_events import (
 if TYPE_CHECKING:
     from a2a.types import Task as A2ATask
 
-SendMessageEvent = (
-    tuple[Task, TaskStatusUpdateEvent | TaskArtifactUpdateEvent | None] | Message
-)
+SendMessageEvent = StreamResponse
 
 
-TERMINAL_STATES: frozenset[TaskState] = frozenset(
+TERMINAL_STATES: frozenset[int] = frozenset(
     {
-        TaskState.completed,
-        TaskState.failed,
-        TaskState.rejected,
-        TaskState.canceled,
+        TASK_STATE_COMPLETED,
+        TASK_STATE_FAILED,
+        TASK_STATE_REJECTED,
+        TASK_STATE_CANCELED,
     }
 )
 
-ACTIONABLE_STATES: frozenset[TaskState] = frozenset(
+ACTIONABLE_STATES: frozenset[int] = frozenset(
     {
-        TaskState.input_required,
-        TaskState.auth_required,
+        TASK_STATE_INPUT_REQUIRED,
+        TASK_STATE_AUTH_REQUIRED,
     }
 )
 
-PENDING_STATES: frozenset[TaskState] = frozenset(
+PENDING_STATES: frozenset[int] = frozenset(
     {
-        TaskState.submitted,
-        TaskState.working,
+        TASK_STATE_SUBMITTED,
+        TASK_STATE_WORKING,
     }
 )
 
@@ -62,7 +80,7 @@ PENDING_STATES: frozenset[TaskState] = frozenset(
 class TaskStateResult(TypedDict):
     """Result dictionary from processing A2A task state."""
 
-    status: TaskState
+    status: int
     history: list[Message]
     result: NotRequired[str]
     error: NotRequired[str]
@@ -84,25 +102,25 @@ def extract_task_result_parts(a2a_task: A2ATask) -> list[str]:
     if a2a_task.status and a2a_task.status.message:
         msg = a2a_task.status.message
         result_parts.extend(
-            part.root.text for part in msg.parts if part.root.kind == "text"
+            part_text(part) for part in msg.parts if part_is_text(part)
         )
 
     if not result_parts and a2a_task.history:
         for history_msg in reversed(a2a_task.history):
-            if history_msg.role == Role.agent:
+            if history_msg.role == ROLE_AGENT:
                 result_parts.extend(
-                    part.root.text
+                    part_text(part)
                     for part in history_msg.parts
-                    if part.root.kind == "text"
+                    if part_is_text(part)
                 )
                 break
 
     if a2a_task.artifacts:
         result_parts.extend(
-            part.root.text
+            part_text(part)
             for artifact in a2a_task.artifacts
             for part in artifact.parts
-            if part.root.kind == "text"
+            if part_is_text(part)
         )
 
     return result_parts
@@ -122,15 +140,15 @@ def extract_error_message(a2a_task: A2ATask, default: str) -> str:
         msg = a2a_task.status.message
         if msg:
             for part in msg.parts:
-                if part.root.kind == "text":
-                    return str(part.root.text)
-        return str(msg)
+                if part_is_text(part):
+                    return str(part_text(part))
+            return str(msg)
 
     if a2a_task.history:
         for history_msg in reversed(a2a_task.history):
             for part in history_msg.parts:
-                if part.root.kind == "text":
-                    return str(part.root.text)
+                if part_is_text(part):
+                    return str(part_text(part))
 
     return default
 
@@ -174,7 +192,7 @@ def process_task_state(
     if result_parts is None:
         result_parts = []
 
-    if a2a_task.status.state == TaskState.completed:
+    if a2a_task.status.state == TASK_STATE_COMPLETED:
         if not result_parts:
             extracted_parts = extract_task_result_parts(a2a_task)
             result_parts.extend(extracted_parts)
@@ -204,22 +222,21 @@ def process_task_state(
         )
 
         return TaskStateResult(
-            status=TaskState.completed,
-            agent_card=agent_card.model_dump(exclude_none=True),
+            status=TASK_STATE_COMPLETED,
+            agent_card=agent_card_to_dict(agent_card),
             result=response_text,
             history=new_messages,
         )
 
-    if a2a_task.status.state == TaskState.input_required:
+    if a2a_task.status.state == TASK_STATE_INPUT_REQUIRED:
         if a2a_task.history:
             new_messages.extend(a2a_task.history)
 
         response_text = extract_error_message(a2a_task, "Additional input required")
         if response_text and not a2a_task.history:
-            agent_message = Message(
-                role=Role.agent,
-                message_id=str(uuid.uuid4()),
-                parts=[Part(root=TextPart(text=response_text))],
+            agent_message = new_text_message(
+                response_text,
+                role=ROLE_AGENT,
                 context_id=a2a_task.context_id,
                 task_id=a2a_task.id,
             )
@@ -247,34 +264,34 @@ def process_task_state(
         )
 
         return TaskStateResult(
-            status=TaskState.input_required,
+            status=TASK_STATE_INPUT_REQUIRED,
             error=response_text,
             history=new_messages,
-            agent_card=agent_card.model_dump(exclude_none=True),
+            agent_card=agent_card_to_dict(agent_card),
         )
 
-    if a2a_task.status.state in {TaskState.failed, TaskState.rejected}:
+    if a2a_task.status.state in {TASK_STATE_FAILED, TASK_STATE_REJECTED}:
         error_msg = extract_error_message(a2a_task, "Task failed without error message")
         if a2a_task.history:
             new_messages.extend(a2a_task.history)
         return TaskStateResult(
-            status=TaskState.failed,
+            status=TASK_STATE_FAILED,
             error=error_msg,
             history=new_messages,
         )
 
-    if a2a_task.status.state == TaskState.auth_required:
+    if a2a_task.status.state == TASK_STATE_AUTH_REQUIRED:
         error_msg = extract_error_message(a2a_task, "Authentication required")
         return TaskStateResult(
-            status=TaskState.auth_required,
+            status=TASK_STATE_AUTH_REQUIRED,
             error=error_msg,
             history=new_messages,
         )
 
-    if a2a_task.status.state == TaskState.canceled:
+    if a2a_task.status.state == TASK_STATE_CANCELED:
         error_msg = extract_error_message(a2a_task, "Task was canceled")
         return TaskStateResult(
-            status=TaskState.canceled,
+            status=TASK_STATE_CANCELED,
             error=error_msg,
             history=new_messages,
         )
@@ -286,7 +303,7 @@ def process_task_state(
 
 
 async def send_message_and_get_task_id(
-    event_stream: AsyncIterator[SendMessageEvent],
+    event_stream: AsyncIterator[StreamResponse],
     new_messages: list[Message],
     agent_card: AgentCard,
     turn_number: int,
@@ -321,11 +338,12 @@ async def send_message_and_get_task_id(
         Task ID string if agent needs polling/waiting, or TaskStateResult if done.
     """
     try:
-        async for event in event_stream:
-            if isinstance(event, Message):
+        async for chunk in event_stream:
+            if is_stream_message(chunk):
+                event = chunk.message
                 new_messages.append(event)
                 result_parts = [
-                    part.root.text for part in event.parts if part.root.kind == "text"
+                    part_text(part) for part in event.parts if part_is_text(part)
                 ]
                 response_text = " ".join(result_parts) if result_parts else ""
 
@@ -348,14 +366,14 @@ async def send_message_and_get_task_id(
                 )
 
                 return TaskStateResult(
-                    status=TaskState.completed,
+                    status=TASK_STATE_COMPLETED,
                     result=response_text,
                     history=new_messages,
-                    agent_card=agent_card.model_dump(exclude_none=True),
+                    agent_card=agent_card_to_dict(agent_card),
                 )
 
-            if isinstance(event, tuple):
-                a2a_task, _ = event
+            if is_stream_task(chunk):
+                a2a_task = chunk.task
 
                 if a2a_task.status.state in TERMINAL_STATES | ACTIONABLE_STATES:
                     result = process_task_state(
@@ -376,18 +394,17 @@ async def send_message_and_get_task_id(
                 return a2a_task.id
 
         return TaskStateResult(
-            status=TaskState.failed,
+            status=TASK_STATE_FAILED,
             error="No task ID received from initial message",
             history=new_messages,
         )
 
-    except A2AClientHTTPError as e:
-        error_msg = f"HTTP Error {e.status_code}: {e!s}"
+    except A2AClientError as e:
+        error_msg = f"A2A Client Error: {e!s}"
 
-        error_message = Message(
-            role=Role.agent,
-            message_id=str(uuid.uuid4()),
-            parts=[Part(root=TextPart(text=error_msg))],
+        error_message = new_text_message(
+            error_msg,
+            role=ROLE_AGENT,
             context_id=context_id,
         )
         new_messages.append(error_message)
@@ -397,8 +414,7 @@ async def send_message_and_get_task_id(
             A2AConnectionErrorEvent(
                 endpoint=endpoint or "",
                 error=str(e),
-                error_type="http_error",
-                status_code=e.status_code,
+                error_type="client_error",
                 a2a_agent_name=a2a_agent_name,
                 operation="send_message",
                 context_id=context_id,
@@ -423,7 +439,7 @@ async def send_message_and_get_task_id(
             ),
         )
         return TaskStateResult(
-            status=TaskState.failed,
+            status=TASK_STATE_FAILED,
             error=error_msg,
             history=new_messages,
         )
@@ -431,10 +447,9 @@ async def send_message_and_get_task_id(
     except Exception as e:
         error_msg = f"Unexpected error during send_message: {e!s}"
 
-        error_message = Message(
-            role=Role.agent,
-            message_id=str(uuid.uuid4()),
-            parts=[Part(root=TextPart(text=error_msg))],
+        error_message = new_text_message(
+            error_msg,
+            role=ROLE_AGENT,
             context_id=context_id,
         )
         new_messages.append(error_message)
@@ -469,7 +484,7 @@ async def send_message_and_get_task_id(
             ),
         )
         return TaskStateResult(
-            status=TaskState.failed,
+            status=TASK_STATE_FAILED,
             error=error_msg,
             history=new_messages,
         )

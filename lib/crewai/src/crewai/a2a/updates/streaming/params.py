@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from a2a.types import TaskStatusUpdateEvent
 
+from crewai.a2a._compat import is_status_update_final, part_is_text, part_text
+
 
 def process_status_update(
     update: TaskStatusUpdateEvent,
@@ -18,11 +20,11 @@ def process_status_update(
     Returns:
         True if this is a final update, False otherwise.
     """
-    is_final = update.final
+    is_final = is_status_update_final(update)
     if update.status and update.status.message and update.status.message.parts:
         result_parts.extend(
-            part.root.text
+            part_text(part)
             for part in update.status.message.parts
-            if part.root.kind == "text" and part.root.text
+            if part_is_text(part) and part_text(part)
         )
     return is_final

@@ -17,8 +17,6 @@ from a2a.server.agent_execution import RequestContext
 from a2a.server.events import EventQueue
 from a2a.types import (
     Artifact,
-    FileWithBytes,
-    FileWithUri,
     InternalError,
     InvalidParamsError,
     Message,
@@ -28,14 +26,24 @@ from a2a.types import (
     TaskStatus,
     TaskStatusUpdateEvent,
 )
-from a2a.utils import (
-    get_data_parts,
-    get_file_parts,
-    new_agent_text_message,
+from a2a.helpers.proto_helpers import (
     new_data_artifact,
     new_text_artifact,
+    new_text_message as new_agent_text_message,
 )
-from a2a.utils.errors import ServerError
+from a2a.utils.errors import A2AError as ServerError
+
+from crewai.a2a._compat import (
+    ROLE_AGENT,
+    TASK_STATE_CANCELED,
+    TASK_STATE_COMPLETED,
+    TASK_STATE_FAILED,
+    part_has_data,
+    part_has_file,
+    part_is_text,
+    part_text,
+    proto_copy,
+)
 from aiocache import SimpleMemoryCache, caches  # type: ignore[import-untyped]
 from pydantic import BaseModel
 from typing_extensions import TypedDict
@@ -62,6 +70,28 @@ logger = logging.getLogger(__name__)
 
 P = ParamSpec("P")
 T = TypeVar("T")
+
+
+def _get_data_parts(parts: list[Part]) -> list[dict[str, Any]]:
+    """Extract data parts from a list of protobuf Parts.
+
+    In a2a-sdk v1.0, data is stored via the ``data`` oneof field on Part
+    (a ``google.protobuf.Value``).
+    """
+    result: list[dict[str, Any]] = []
+    for part in parts:
+        if part_has_data(part):
+            from google.protobuf.json_format import MessageToDict
+
+            val = MessageToDict(part.data)
+            if isinstance(val, dict):
+                result.append(val)
+    return result
+
+
+def _get_file_parts(parts: list[Part]) -> list[Part]:
+    """Return parts that carry file content (raw bytes or url)."""
+    return [p for p in parts if part_has_file(p)]
 
 
 class RedisCacheConfig(TypedDict, total=False):
@@ -196,12 +226,12 @@ def cancellable(
 
 
 def _convert_a2a_files_to_file_inputs(
-    a2a_files: list[FileWithBytes | FileWithUri],
+    a2a_files: list[Part],
 ) -> dict[str, Any]:
-    """Convert a2a file types to crewai FileInput dict.
+    """Convert a2a file parts to crewai FileInput dict.
 
     Args:
-        a2a_files: List of FileWithBytes or FileWithUri from a2a SDK.
+        a2a_files: List of Parts that carry file content (raw or url).
 
     Returns:
         Dictionary mapping file names to FileInput objects.
@@ -213,15 +243,13 @@ def _convert_a2a_files_to_file_inputs(
         return {}
 
     file_dict: dict[str, Any] = {}
-    for idx, a2a_file in enumerate(a2a_files):
-        if isinstance(a2a_file, FileWithBytes):
-            file_bytes = base64.b64decode(a2a_file.bytes)
-            name = a2a_file.name or f"file_{idx}"
-            file_source = FileBytes(data=file_bytes, filename=a2a_file.name)
+    for idx, part in enumerate(a2a_files):
+        name = part.filename or f"file_{idx}"
+        if part.HasField("raw"):
+            file_source = FileBytes(data=part.raw, filename=name)
             file_dict[name] = File(source=file_source)
-        elif isinstance(a2a_file, FileWithUri):
-            name = a2a_file.name or f"file_{idx}"
-            file_dict[name] = File(source=a2a_file.uri)
+        elif part.HasField("url"):
+            file_dict[name] = File(source=part.url)
 
     return file_dict
 
@@ -239,8 +267,9 @@ def _extract_response_schema(parts: list[Part]) -> dict[str, Any] | None:
         JSON schema dict if found, None otherwise.
     """
     for part in parts:
-        if part.root.kind == "text" and part.root.metadata:
-            schema = part.root.metadata.get("schema")
+        if part_is_text(part) and part.metadata:
+            metadata_dict = dict(part.metadata)
+            schema = metadata_dict.get("schema")
             if schema and isinstance(schema, dict):
                 return schema  # type: ignore[no-any-return]
     return None
@@ -330,7 +359,7 @@ async def _execute_impl(
 
     response_model: type[BaseModel] | None = None
     structured_inputs: list[dict[str, Any]] = []
-    a2a_files: list[FileWithBytes | FileWithUri] = []
+    a2a_files: list[Part] = []
 
     if context.message and context.message.parts:
         schema = _extract_response_schema(context.message.parts)
@@ -343,8 +372,8 @@ async def _execute_impl(
                     extra={"error": str(e), "schema_title": schema.get("title")},
                 )
 
-        structured_inputs = get_data_parts(context.message.parts)
-        a2a_files = get_file_parts(context.message.parts)
+        structured_inputs = _get_data_parts(context.message.parts)
+        a2a_files = _get_file_parts(context.message.parts)
 
     task_id = context.task_id
     context_id = context.context_id
@@ -387,12 +416,12 @@ async def _execute_impl(
             )
         result_str = str(result)
         history: list[Message] = [context.message] if context.message else []
-        history.append(new_agent_text_message(result_str, context_id, task_id))
+        history.append(new_agent_text_message(result_str, context_id=context_id, task_id=task_id))
         await event_queue.enqueue_event(
             A2ATask(
                 id=task_id,
                 context_id=context_id,
-                status=TaskStatus(state=TaskState.completed),
+                status=TaskStatus(state=TASK_STATE_COMPLETED),
                 artifacts=[_create_result_artifact(result, task_id)],
                 history=history,
             )
@@ -476,9 +505,9 @@ async def cancel(
         raise ServerError(InvalidParamsError(message="task_id and context_id required"))
 
     if context.current_task and context.current_task.status.state in (
-        TaskState.completed,
-        TaskState.failed,
-        TaskState.canceled,
+        TASK_STATE_COMPLETED,
+        TASK_STATE_FAILED,
+        TASK_STATE_CANCELED,
     ):
         return context.current_task
 
@@ -492,13 +521,12 @@ async def cancel(
         TaskStatusUpdateEvent(
             task_id=task_id,
             context_id=context_id,
-            status=TaskStatus(state=TaskState.canceled),
-            final=True,
+            status=TaskStatus(state=TASK_STATE_CANCELED),
         )
     )
 
     if context.current_task:
-        context.current_task.status = TaskStatus(state=TaskState.canceled)
+        context.current_task.status.CopyFrom(TaskStatus(state=TASK_STATE_CANCELED))
         return context.current_task
     return None
 
@@ -571,7 +599,7 @@ def list_tasks(
 
     result: list[A2ATask] = []
     for task in page:
-        task = task.model_copy(deep=True)
+        task = proto_copy(task)
         if history_length is not None and task.history:
             task.history = task.history[-history_length:]
         if not include_artifacts:

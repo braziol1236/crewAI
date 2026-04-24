@@ -12,6 +12,7 @@ from a2a.server.agent_execution import RequestContext
 from a2a.server.events import EventQueue
 from a2a.types import Message, Task as A2ATask, TaskState, TaskStatus
 
+from crewai.a2a._compat import TASK_STATE_CANCELED, TASK_STATE_WORKING
 from crewai.a2a.utils.task import cancel, cancellable, execute
 
 
@@ -291,8 +292,7 @@ class TestCancel:
 
         assert event.task_id == mock_context.task_id
         assert event.context_id == mock_context.context_id
-        assert event.status.state == TaskState.canceled
-        assert event.final is True
+        assert event.status.state == TASK_STATE_CANCELED
 
     @pytest.mark.asyncio
     async def test_returns_none_when_no_current_task(
@@ -315,13 +315,13 @@ class TestCancel:
     ) -> None:
         """Cancel returns updated task when context has current_task."""
         current_task = MagicMock(spec=A2ATask)
-        current_task.status = TaskStatus(state=TaskState.working)
+        current_task.status = TaskStatus(state=TASK_STATE_WORKING)
         mock_context.current_task = current_task
 
         result = await cancel(mock_context, mock_event_queue)
 
         assert result is current_task
-        assert result.status.state == TaskState.canceled
+        assert result.status.state == TASK_STATE_CANCELED
 
     @pytest.mark.asyncio
     async def test_cleanup_after_cancel(

@@ -12,8 +12,11 @@ import time
 from types import MethodType
 from typing import TYPE_CHECKING
 
-from a2a.client.errors import A2AClientHTTPError
-from a2a.types import AgentCapabilities, AgentCard, AgentSkill
+from a2a.client.errors import A2AClientError
+from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
+from google.protobuf.json_format import ParseDict
+
+from crewai.a2a._compat import agent_card_to_dict, agent_card_protocol_version, proto_copy
 from aiocache import cached  # type: ignore[import-untyped]
 from aiocache.serializers import PickleSerializer  # type: ignore[import-untyped]
 import httpx
@@ -277,9 +280,9 @@ async def _afetch_agent_card_impl(
             )
             response.raise_for_status()
 
-            agent_card = AgentCard.model_validate(response.json())
+            agent_card = ParseDict(response.json(), AgentCard())
             fetch_time_ms = (time.perf_counter() - start_time) * 1000
-            agent_card_dict = agent_card.model_dump(exclude_none=True)
+            agent_card_dict = agent_card_to_dict(agent_card)
 
             crewai_event_bus.emit(
                 None,
@@ -287,7 +290,7 @@ async def _afetch_agent_card_impl(
                     endpoint=endpoint,
                     a2a_agent_name=agent_card.name,
                     agent_card=agent_card_dict,
-                    protocol_version=agent_card.protocol_version,
+                    protocol_version=agent_card_protocol_version(agent_card),
                     provider=agent_card_dict.get("provider"),
                     cached=False,
                     fetch_time_ms=fetch_time_ms,
@@ -326,7 +329,7 @@ async def _afetch_agent_card_impl(
                     ),
                 )
 
-                raise A2AClientHTTPError(401, msg) from e
+                raise A2AClientError(msg) from e
 
             crewai_event_bus.emit(
                 None,
@@ -470,7 +473,9 @@ def _crew_to_agent_card(crew: Crew, url: str) -> AgentCard:
     return AgentCard(
         name=crew_name,
         description=" ".join(description_parts),
-        url=url,
+        supported_interfaces=[
+            AgentInterface(url=url, protocol_binding="JSONRPC"),
+        ],
         version="1.0.0",
         capabilities=AgentCapabilities(
             streaming=True,
@@ -540,27 +545,42 @@ def _agent_to_agent_card(agent: Agent, url: str) -> AgentCard:
             if ext.uri not in existing_uris:
                 existing_exts.append(ext)
 
-        capabilities = capabilities.model_copy(update={"extensions": existing_exts})
+        capabilities = proto_copy(capabilities)
+        del capabilities.extensions[:]
+        capabilities.extensions.extend(existing_exts)
+
+    primary_interface = AgentInterface(
+        url=server_config.url or url,
+        protocol_binding=server_config.transport.preferred or "JSONRPC",
+        protocol_version=server_config.protocol_version or "",
+    )
+    interfaces = [primary_interface]
+    if server_config.additional_interfaces:
+        interfaces.extend(server_config.additional_interfaces)
 
     card = AgentCard(
         name=name,
         description=description,
-        url=server_config.url or url,
+        supported_interfaces=interfaces,
         version=server_config.version,
         capabilities=capabilities,
         default_input_modes=server_config.default_input_modes,
         default_output_modes=server_config.default_output_modes,
         skills=skills,
-        preferred_transport=server_config.transport.preferred,
-        protocol_version=server_config.protocol_version,
-        provider=server_config.provider,
-        documentation_url=server_config.documentation_url,
-        icon_url=server_config.icon_url,
-        additional_interfaces=server_config.additional_interfaces,
-        security=server_config.security,
-        security_schemes=server_config.security_schemes,
-        supports_authenticated_extended_card=server_config.supports_authenticated_extended_card,
+        documentation_url=server_config.documentation_url or "",
+        icon_url=server_config.icon_url or "",
     )
+
+    if server_config.provider:
+        card.provider.CopyFrom(server_config.provider)
+
+    if server_config.security_schemes:
+        for k, v in server_config.security_schemes.items():
+            card.security_schemes[k].CopyFrom(v)
+
+    if server_config.security:
+        for req in server_config.security:
+            card.security_requirements.append(req)
 
     if server_config.signing_config:
         signature = sign_agent_card(
@@ -569,9 +589,11 @@ def _agent_to_agent_card(agent: Agent, url: str) -> AgentCard:
             key_id=server_config.signing_config.key_id,
             algorithm=server_config.signing_config.algorithm,
         )
-        card = card.model_copy(update={"signatures": [signature]})
+        del card.signatures[:]
+        card.signatures.append(signature)
     elif server_config.signatures:
-        card = card.model_copy(update={"signatures": server_config.signatures})
+        del card.signatures[:]
+        card.signatures.extend(server_config.signatures)
 
     return card
 

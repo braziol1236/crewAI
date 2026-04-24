@@ -264,7 +264,7 @@ def negotiate_content_types(
         crewai_event_bus.emit(
             None,
             A2AContentTypeNegotiatedEvent(
-                endpoint=endpoint or agent_card.url,
+                endpoint=endpoint or "",
                 a2a_agent_name=a2a_agent_name or agent_card.name,
                 skill_name=skill_name,
                 client_input_modes=client_input_modes,
@@ -303,22 +303,21 @@ def get_part_content_type(part: Part) -> str:
     """Extract MIME type from an A2A Part.
 
     Args:
-        part: A Part object containing TextPart, DataPart, or FilePart.
+        part: A Part object (protobuf oneof: text, data, raw, url).
 
     Returns:
         The MIME type string for this part.
     """
-    root = part.root
-    if root.kind == "text":
+    if part.HasField("text"):
         return TEXT_PLAIN
-    if root.kind == "data":
-        metadata = root.metadata or {}
+    if part.HasField("data"):
+        metadata = dict(part.metadata) if part.metadata else {}
         mime = metadata.get("mimeType", "")
         if mime == APPLICATION_A2UI_JSON:
             return APPLICATION_A2UI_JSON
         return APPLICATION_JSON
-    if root.kind == "file":
-        return root.file.mime_type or APPLICATION_OCTET_STREAM
+    if part.HasField("raw") or part.HasField("url"):
+        return part.media_type or APPLICATION_OCTET_STREAM
     return APPLICATION_OCTET_STREAM
 
 

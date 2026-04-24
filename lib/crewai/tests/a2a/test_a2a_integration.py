@@ -7,8 +7,17 @@ import pytest
 import pytest_asyncio
 
 from a2a.client import ClientFactory
-from a2a.types import AgentCard, Message, Part, Role, TaskState, TextPart
+from a2a.types import AgentCapabilities, AgentCard, AgentInterface, Message, Part, Role, TaskState
 
+from crewai.a2a._compat import (
+    ROLE_AGENT,
+    ROLE_USER,
+    TASK_STATE_COMPLETED,
+    TASK_STATE_FAILED,
+    agent_card_url,
+    new_text_message,
+    new_text_part,
+)
 from crewai.a2a.updates.polling.handler import PollingHandler
 from crewai.a2a.updates.streaming.handler import StreamingHandler
 
@@ -27,11 +36,7 @@ async def a2a_client():
 @pytest.fixture
 def test_message() -> Message:
     """Create a simple test message."""
-    return Message(
-        role=Role.user,
-        parts=[Part(root=TextPart(text="What is 2 + 2?"))],
-        message_id=str(uuid.uuid4()),
-    )
+    return new_text_message("What is 2 + 2?", role=ROLE_USER)
 
 
 @pytest_asyncio.fixture
@@ -51,7 +56,7 @@ class TestA2AAgentCardFetching:
 
         assert card is not None
         assert card.name == "GPT Assistant"
-        assert card.url is not None
+        assert card.supported_interfaces is not None
         assert card.capabilities is not None
         assert card.capabilities.streaming is True
 
@@ -80,7 +85,7 @@ class TestA2APollingIntegration:
         )
 
         assert isinstance(result, dict)
-        assert result["status"] == TaskState.completed
+        assert result["status"] == TASK_STATE_COMPLETED
         assert result.get("result") is not None
         assert "4" in result["result"]
 
@@ -104,11 +109,11 @@ class TestA2AStreamingIntegration:
             message=test_message,
             new_messages=new_messages,
             agent_card=agent_card,
-            endpoint=agent_card.url,
+            endpoint=agent_card_url(agent_card),
         )
 
         assert isinstance(result, dict)
-        assert result["status"] == TaskState.completed
+        assert result["status"] == TASK_STATE_COMPLETED
         assert result.get("result") is not None
 
 
@@ -123,19 +128,19 @@ class TestA2ATaskOperations:
         test_message: Message,
     ) -> None:
         """Test sending a message and getting a response."""
-        from a2a.types import Task
+        from a2a.types import StreamResponse, Task
+
+        from crewai.a2a._compat import is_stream_task
 
         final_task: Task | None = None
         async for event in a2a_client.send_message(test_message):
-            if isinstance(event, tuple) and len(event) >= 1:
-                task, _ = event
-                if isinstance(task, Task):
-                    final_task = task
+            if isinstance(event, StreamResponse) and is_stream_task(event):
+                final_task = event.task
 
         assert final_task is not None
-        assert final_task.id is not None
+        assert final_task.id != ""
         assert final_task.status is not None
-        assert final_task.status.state == TaskState.completed
+        assert final_task.status.state == TaskState.TASK_STATE_COMPLETED
 
 
 class TestA2APushNotificationHandler:
@@ -148,17 +153,19 @@ class TestA2APushNotificationHandler:
     @pytest.fixture
     def mock_agent_card(self) -> AgentCard:
         """Create a minimal valid agent card for testing."""
-        from a2a.types import AgentCapabilities
-
         return AgentCard(
             name="Test Agent",
             description="Test agent for push notification tests",
-            url="http://localhost:9999",
+            supported_interfaces=[
+                AgentInterface(
+                    url="http://localhost:9999",
+                    protocol_binding="JSONRPC",
+                ),
+            ],
             version="1.0.0",
             capabilities=AgentCapabilities(streaming=True, push_notifications=True),
             default_input_modes=["text"],
             default_output_modes=["text"],
-            skills=[],
         )
 
     @pytest.fixture
@@ -169,7 +176,7 @@ class TestA2APushNotificationHandler:
         return Task(
             id="task-123",
             context_id="ctx-123",
-            status=TaskStatus(state=TaskState.working),
+            status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
         )
 
     @pytest.mark.asyncio
@@ -181,7 +188,7 @@ class TestA2APushNotificationHandler:
         """Test that push handler waits for result from store."""
         from unittest.mock import AsyncMock, MagicMock
 
-        from a2a.types import Task, TaskStatus
+        from a2a.types import StreamResponse, Task, TaskStatus
         from pydantic import AnyHttpUrl
 
         from crewai.a2a.updates.push_notifications.config import PushNotificationConfig
@@ -190,15 +197,14 @@ class TestA2APushNotificationHandler:
         completed_task = Task(
             id="task-123",
             context_id="ctx-123",
-            status=TaskStatus(state=TaskState.completed),
-            history=[],
+            status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
         )
 
         mock_store = MagicMock()
         mock_store.wait_for_result = AsyncMock(return_value=completed_task)
 
         async def mock_send_message(*args, **kwargs):
-            yield (mock_task, None)
+            yield StreamResponse(task=mock_task)
 
         mock_client = MagicMock()
         mock_client.send_message = mock_send_message
@@ -209,11 +215,7 @@ class TestA2APushNotificationHandler:
             result_store=mock_store,
         )
 
-        test_msg = Message(
-            role=Role.user,
-            parts=[Part(root=TextPart(text="What is 2+2?"))],
-            message_id="msg-001",
-        )
+        test_msg = new_text_message("What is 2+2?", role=ROLE_USER)
 
         new_messages: list[Message] = []
 
@@ -226,7 +228,7 @@ class TestA2APushNotificationHandler:
             result_store=mock_store,
             polling_timeout=30.0,
             polling_interval=1.0,
-            endpoint=mock_agent_card.url,
+            endpoint=agent_card_url(mock_agent_card),
         )
 
         mock_store.wait_for_result.assert_called_once_with(
@@ -235,7 +237,7 @@ class TestA2APushNotificationHandler:
             poll_interval=1.0,
         )
 
-        assert result["status"] == TaskState.completed
+        assert result["status"] == TASK_STATE_COMPLETED
 
     @pytest.mark.asyncio
     async def test_push_handler_returns_failure_on_timeout(
@@ -245,7 +247,7 @@ class TestA2APushNotificationHandler:
         """Test that push handler returns failure when result store times out."""
         from unittest.mock import AsyncMock, MagicMock
 
-        from a2a.types import Task, TaskStatus
+        from a2a.types import StreamResponse, Task, TaskStatus
         from pydantic import AnyHttpUrl
 
         from crewai.a2a.updates.push_notifications.config import PushNotificationConfig
@@ -257,11 +259,11 @@ class TestA2APushNotificationHandler:
         working_task = Task(
             id="task-456",
             context_id="ctx-456",
-            status=TaskStatus(state=TaskState.working),
+            status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
         )
 
         async def mock_send_message(*args, **kwargs):
-            yield (working_task, None)
+            yield StreamResponse(task=working_task)
 
         mock_client = MagicMock()
         mock_client.send_message = mock_send_message
@@ -272,11 +274,7 @@ class TestA2APushNotificationHandler:
             result_store=mock_store,
         )
 
-        test_msg = Message(
-            role=Role.user,
-            parts=[Part(root=TextPart(text="test"))],
-            message_id="msg-002",
-        )
+        test_msg = new_text_message("test", role=ROLE_USER)
 
         new_messages: list[Message] = []
 
@@ -289,10 +287,10 @@ class TestA2APushNotificationHandler:
             result_store=mock_store,
             polling_timeout=5.0,
             polling_interval=0.5,
-            endpoint=mock_agent_card.url,
+            endpoint=agent_card_url(mock_agent_card),
         )
 
-        assert result["status"] == TaskState.failed
+        assert result["status"] == TASK_STATE_FAILED
         assert "timeout" in result.get("error", "").lower()
 
     @pytest.mark.asyncio
@@ -307,11 +305,7 @@ class TestA2APushNotificationHandler:
 
         mock_client = MagicMock()
 
-        test_msg = Message(
-            role=Role.user,
-            parts=[Part(root=TextPart(text="test"))],
-            message_id="msg-003",
-        )
+        test_msg = new_text_message("test", role=ROLE_USER)
 
         new_messages: list[Message] = []
 
@@ -320,8 +314,8 @@ class TestA2APushNotificationHandler:
             message=test_msg,
             new_messages=new_messages,
             agent_card=mock_agent_card,
-            endpoint=mock_agent_card.url,
+            endpoint=agent_card_url(mock_agent_card),
         )
 
-        assert result["status"] == TaskState.failed
+        assert result["status"] == TASK_STATE_FAILED
         assert "config" in result.get("error", "").lower()

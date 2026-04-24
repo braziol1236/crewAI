@@ -568,7 +568,7 @@ class A2AServerConfig(BaseModel):
         auth: Authentication scheme for A2A endpoints.
     """
 
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
     name: str | None = Field(
         default=None,

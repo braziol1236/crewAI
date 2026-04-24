@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
-from a2a.types import PushNotificationAuthenticationInfo
 from pydantic import AnyHttpUrl, BaseModel, BeforeValidator, Field
 
 from crewai.a2a.updates.base import PushNotificationResultStore
@@ -46,7 +45,7 @@ class PushNotificationConfig(BaseModel):
     url: AnyHttpUrl = Field(description="Callback URL for push notifications")
     id: str | None = Field(default=None, description="Unique config identifier")
     token: str | None = Field(default=None, description="Validation token")
-    authentication: PushNotificationAuthenticationInfo | None = Field(
+    authentication: Any | None = Field(
         default=None, description="Auth info for agent to use when calling webhook"
     )
     timeout: float | None = Field(

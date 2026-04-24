@@ -7,14 +7,20 @@ from typing import TYPE_CHECKING, Any
 import uuid
 
 from a2a.client import Client
-from a2a.client.errors import A2AClientHTTPError
+from a2a.client.errors import A2AClientError
 from a2a.types import (
     AgentCard,
     Message,
     Part,
     Role,
     TaskState,
-    TextPart,
+)
+
+from crewai.a2a._compat import (
+    ROLE_AGENT,
+    TASK_STATE_FAILED,
+    new_text_message,
+    new_text_part,
 )
 from typing_extensions import Unpack
 
@@ -69,10 +75,9 @@ def _handle_push_error(
     Returns:
         TaskStateResult with failed status.
     """
-    error_message = Message(
-        role=Role.agent,
-        message_id=str(uuid.uuid4()),
-        parts=[Part(root=TextPart(text=error_msg))],
+    error_message = new_text_message(
+        error_msg,
+        role=ROLE_AGENT,
         context_id=params.context_id,
         task_id=task_id,
     )
@@ -110,7 +115,7 @@ def _handle_push_error(
         ),
     )
     return TaskStateResult(
-        status=TaskState.failed,
+        status=TASK_STATE_FAILED,
         error=error_msg,
         history=new_messages,
     )
@@ -221,7 +226,7 @@ class PushNotificationHandler:
                 ),
             )
             return TaskStateResult(
-                status=TaskState.failed,
+                status=TASK_STATE_FAILED,
                 error=error_msg,
                 history=new_messages,
             )
@@ -245,7 +250,7 @@ class PushNotificationHandler:
                 ),
             )
             return TaskStateResult(
-                status=TaskState.failed,
+                status=TASK_STATE_FAILED,
                 error=error_msg,
                 history=new_messages,
             )
@@ -304,7 +309,7 @@ class PushNotificationHandler:
 
             if final_task is None:
                 return TaskStateResult(
-                    status=TaskState.failed,
+                    status=TASK_STATE_FAILED,
                     error=f"Push notification timeout after {polling_timeout}s",
                     history=new_messages,
                 )
@@ -325,21 +330,20 @@ class PushNotificationHandler:
                 return result
 
             return TaskStateResult(
-                status=TaskState.failed,
+                status=TASK_STATE_FAILED,
                 error=f"Unexpected task state: {final_task.status.state}",
                 history=new_messages,
             )
 
-        except A2AClientHTTPError as e:
+        except A2AClientError as e:
             return _handle_push_error(
                 error=e,
-                error_msg=f"HTTP Error {e.status_code}: {e!s}",
-                error_type="http_error",
+                error_msg=f"A2A Client Error: {e!s}",
+                error_type="client_error",
                 new_messages=new_messages,
                 agent_branch=agent_branch,
                 params=params,
                 task_id=task_id,
-                status_code=e.status_code,
             )
 
         except Exception as e:

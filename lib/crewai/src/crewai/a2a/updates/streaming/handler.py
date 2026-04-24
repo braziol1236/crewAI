@@ -8,22 +8,35 @@ from typing import Final
 import uuid
 
 from a2a.client import Client
-from a2a.client.errors import A2AClientHTTPError
+from a2a.client.errors import A2AClientError
 from a2a.types import (
     AgentCard,
+    GetTaskRequest,
     Message,
     Part,
     Role,
+    StreamResponse,
+    SubscribeToTaskRequest,
     Task,
     TaskArtifactUpdateEvent,
-    TaskIdParams,
-    TaskQueryParams,
     TaskState,
     TaskStatusUpdateEvent,
-    TextPart,
 )
 from typing_extensions import Unpack
 
+from crewai.a2a._compat import (
+    ROLE_AGENT,
+    TASK_STATE_FAILED,
+    agent_card_to_dict,
+    is_status_update_final,
+    is_stream_artifact_update,
+    is_stream_message,
+    is_stream_status_update,
+    is_stream_task,
+    new_text_message,
+    part_is_text,
+    part_text,
+)
 from crewai.a2a.task_helpers import (
     ACTIONABLE_STATES,
     TERMINAL_STATES,
@@ -48,6 +61,18 @@ logger = logging.getLogger(__name__)
 
 MAX_RESUBSCRIBE_ATTEMPTS: Final[int] = 3
 RESUBSCRIBE_BACKOFF_BASE: Final[float] = 1.0
+
+
+def _extract_text_from_artifact(artifact: TaskArtifactUpdateEvent) -> list[str]:
+    """Extract text parts from an artifact update event."""
+    parts: list[str] = []
+    if artifact.artifact and artifact.artifact.parts:
+        parts.extend(
+            part_text(part)
+            for part in artifact.artifact.parts
+            if part_is_text(part)
+        )
+    return parts
 
 
 class StreamingHandler:
@@ -86,7 +111,7 @@ class StreamingHandler:
         params = extract_common_params(kwargs)  # type: ignore[arg-type]
 
         try:
-            a2a_task: Task = await client.get_task(TaskQueryParams(id=task_id))
+            a2a_task: Task = await client.get_task(GetTaskRequest(id=task_id))
 
             if a2a_task.status.state in TERMINAL_STATES:
                 logger.info(
@@ -138,25 +163,15 @@ class StreamingHandler:
                     if attempt > 0:
                         await asyncio.sleep(backoff)
 
-                    event_stream = client.resubscribe(TaskIdParams(id=task_id))
+                    event_stream = client.subscribe(SubscribeToTaskRequest(id=task_id))
 
-                    async for event in event_stream:
-                        if isinstance(event, tuple):
-                            resubscribed_task, update = event
+                    async for chunk in event_stream:
+                        if is_stream_task(chunk):
+                            resubscribed_task = chunk.task
 
-                            is_final_update = (
-                                process_status_update(update, result_parts)
-                                if isinstance(update, TaskStatusUpdateEvent)
-                                else False
-                            )
-
-                            if isinstance(update, TaskArtifactUpdateEvent):
-                                artifact = update.artifact
-                                result_parts.extend(
-                                    part.root.text
-                                    for part in artifact.parts
-                                    if part.root.kind == "text"
-                                )
+                        if is_stream_status_update(chunk):
+                            update = chunk.status_update
+                            is_final_update = process_status_update(update, result_parts)
 
                             if (
                                 is_final_update
@@ -178,15 +193,20 @@ class StreamingHandler:
                                     is_final=is_final_update,
                                 )
 
-                        elif isinstance(event, Message):
-                            new_messages.append(event)
+                        if is_stream_artifact_update(chunk):
+                            artifact = chunk.artifact_update
+                            result_parts.extend(_extract_text_from_artifact(artifact))
+
+                        if is_stream_message(chunk):
+                            msg = chunk.message
+                            new_messages.append(msg)
                             result_parts.extend(
-                                part.root.text
-                                for part in event.parts
-                                if part.root.kind == "text"
+                                part_text(part)
+                                for part in msg.parts
+                                if part_is_text(part)
                             )
 
-                    final_task = await client.get_task(TaskQueryParams(id=task_id))
+                    final_task = await client.get_task(GetTaskRequest(id=task_id))
                     return process_task_state(
                         a2a_task=final_task,
                         new_messages=new_messages,
@@ -261,6 +281,7 @@ class StreamingHandler:
         event_stream = client.send_message(message)
         chunk_index = 0
         current_task_id: str | None = task_id
+        current_task: Task | None = None
 
         crewai_event_bus.emit(
             agent_branch,
@@ -278,22 +299,25 @@ class StreamingHandler:
         )
 
         try:
-            async for event in event_stream:
-                if isinstance(event, tuple):
-                    a2a_task, _ = event
-                    current_task_id = a2a_task.id
+            async for chunk in event_stream:
+                # Extract task from task payload
+                if is_stream_task(chunk):
+                    current_task = chunk.task
+                    current_task_id = current_task.id
 
-                if isinstance(event, Message):
-                    new_messages.append(event)
-                    message_context_id = event.context_id or params.context_id
-                    for part in event.parts:
-                        if part.root.kind == "text":
-                            text = part.root.text
+                # Handle standalone message responses
+                if is_stream_message(chunk):
+                    msg = chunk.message
+                    new_messages.append(msg)
+                    message_context_id = msg.context_id or params.context_id
+                    for part in msg.parts:
+                        if part_is_text(part):
+                            text = part_text(part)
                             result_parts.append(text)
                             crewai_event_bus.emit(
                                 agent_branch,
                                 A2AStreamingChunkEvent(
-                                    task_id=event.task_id or task_id,
+                                    task_id=msg.task_id or task_id,
                                     context_id=message_context_id,
                                     chunk=text,
                                     chunk_index=chunk_index,
@@ -307,38 +331,39 @@ class StreamingHandler:
                             )
                             chunk_index += 1
 
-                elif isinstance(event, tuple):
-                    a2a_task, update = event
-
-                    if isinstance(update, TaskArtifactUpdateEvent):
-                        artifact = update.artifact
+                # Handle artifact updates
+                elif is_stream_artifact_update(chunk):
+                    artifact_update = chunk.artifact_update
+                    artifact = artifact_update.artifact
+                    if artifact and artifact.parts:
                         result_parts.extend(
-                            part.root.text
+                            part_text(part)
                             for part in artifact.parts
-                            if part.root.kind == "text"
+                            if part_is_text(part)
                         )
                         artifact_size = None
                         if artifact.parts:
                             artifact_size = sum(
-                                len(p.root.text.encode())
-                                if p.root.kind == "text"
-                                else len(getattr(p.root, "data", b""))
+                                len(part_text(p).encode())
+                                if part_is_text(p)
+                                else len(getattr(p, "raw", b""))
                                 for p in artifact.parts
                             )
-                        effective_context_id = a2a_task.context_id or params.context_id
+                        effective_context_id = (
+                            (current_task.context_id if current_task else None)
+                            or params.context_id
+                        )
                         crewai_event_bus.emit(
                             agent_branch,
                             A2AArtifactReceivedEvent(
-                                task_id=a2a_task.id,
+                                task_id=artifact_update.task_id or current_task_id,
                                 artifact_id=artifact.artifact_id,
                                 artifact_name=artifact.name,
                                 artifact_description=artifact.description,
-                                mime_type=artifact.parts[0].root.kind
-                                if artifact.parts
-                                else None,
+                                mime_type="text" if artifact.parts and part_is_text(artifact.parts[0]) else None,
                                 size_bytes=artifact_size,
-                                append=update.append or False,
-                                last_chunk=update.last_chunk or False,
+                                append=artifact_update.append or False,
+                                last_chunk=artifact_update.last_chunk or False,
                                 endpoint=params.endpoint,
                                 a2a_agent_name=params.a2a_agent_name,
                                 context_id=effective_context_id,
@@ -349,86 +374,63 @@ class StreamingHandler:
                             ),
                         )
 
-                    is_final_update = (
-                        process_status_update(update, result_parts)
-                        if isinstance(update, TaskStatusUpdateEvent)
-                        else False
-                    )
+                # Handle status updates
+                elif is_stream_status_update(chunk):
+                    update = chunk.status_update
+                    is_final_update = process_status_update(update, result_parts)
 
-                    if (
-                        not is_final_update
-                        and a2a_task.status.state
-                        not in TERMINAL_STATES | ACTIONABLE_STATES
+                    if current_task and (
+                        is_final_update
+                        or current_task.status.state
+                        in TERMINAL_STATES | ACTIONABLE_STATES
                     ):
+                        final_result = process_task_state(
+                            a2a_task=current_task,
+                            new_messages=new_messages,
+                            agent_card=agent_card,
+                            turn_number=params.turn_number,
+                            is_multiturn=params.is_multiturn,
+                            agent_role=params.agent_role,
+                            result_parts=result_parts,
+                            endpoint=params.endpoint,
+                            a2a_agent_name=params.a2a_agent_name,
+                            from_task=params.from_task,
+                            from_agent=params.from_agent,
+                            is_final=is_final_update,
+                        )
+                    elif not current_task and is_final_update:
+                        pass
+                    else:
                         continue
 
-                    final_result = process_task_state(
-                        a2a_task=a2a_task,
-                        new_messages=new_messages,
-                        agent_card=agent_card,
-                        turn_number=params.turn_number,
-                        is_multiturn=params.is_multiturn,
-                        agent_role=params.agent_role,
-                        result_parts=result_parts,
-                        endpoint=params.endpoint,
-                        a2a_agent_name=params.a2a_agent_name,
-                        from_task=params.from_task,
-                        from_agent=params.from_agent,
-                        is_final=is_final_update,
-                    )
-                    if final_result:
-                        break
+        except A2AClientError as e:
+            logger.warning(
+                "Stream interrupted",
+                extra={
+                    "task_id": current_task_id,
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                },
+            )
 
-        except A2AClientHTTPError as e:
             if current_task_id:
-                logger.info(
-                    "Stream interrupted with HTTP error, attempting recovery",
-                    extra={
-                        "task_id": current_task_id,
-                        "error": str(e),
-                        "status_code": e.status_code,
-                    },
+                recovery_result = await StreamingHandler._try_recover_from_interruption(
+                    client=client,
+                    task_id=current_task_id,
+                    new_messages=new_messages,
+                    agent_card=agent_card,
+                    result_parts=result_parts,
+                    **kwargs,
                 )
-                recovery_kwargs = {k: v for k, v in kwargs.items() if k != "task_id"}
-                recovered_result = (
-                    await StreamingHandler._try_recover_from_interruption(
-                        client=client,
-                        task_id=current_task_id,
-                        new_messages=new_messages,
-                        agent_card=agent_card,
-                        result_parts=result_parts,
-                        **recovery_kwargs,
-                    )
-                )
-                if recovered_result:
-                    logger.info(
-                        "Successfully recovered task after HTTP error",
-                        extra={
-                            "task_id": current_task_id,
-                            "status": str(recovered_result.get("status")),
-                        },
-                    )
-                    return recovered_result
+                if recovery_result:
+                    return recovery_result
 
-                logger.warning(
-                    "Failed to recover from HTTP error, returning failure",
-                    extra={
-                        "task_id": current_task_id,
-                        "status_code": e.status_code,
-                        "original_error": str(e),
-                    },
-                )
-
-            error_msg = f"HTTP Error {e.status_code}: {e!s}"
-            error_type = "http_error"
-            status_code = e.status_code
-
-            error_message = Message(
-                role=Role.agent,
-                message_id=str(uuid.uuid4()),
-                parts=[Part(root=TextPart(text=error_msg))],
+            error_msg = f"A2A Client Error: {e!s}"
+            error_message = new_text_message(
+                error_msg,
+                role=ROLE_AGENT,
                 context_id=params.context_id,
-                task_id=task_id,
+                task_id=current_task_id,
             )
             new_messages.append(error_message)
 
@@ -437,12 +439,11 @@ class StreamingHandler:
                 A2AConnectionErrorEvent(
                     endpoint=params.endpoint,
                     error=str(e),
-                    error_type=error_type,
-                    status_code=status_code,
+                    error_type="client_error",
                     a2a_agent_name=params.a2a_agent_name,
                     operation="streaming",
                     context_id=params.context_id,
-                    task_id=task_id,
+                    task_id=current_task_id,
                     from_task=params.from_task,
                     from_agent=params.from_agent,
                 ),
@@ -464,116 +465,40 @@ class StreamingHandler:
                 ),
             )
             return TaskStateResult(
-                status=TaskState.failed,
-                error=error_msg,
-                history=new_messages,
-            )
-
-        except (asyncio.TimeoutError, asyncio.CancelledError, ConnectionError) as e:
-            error_type = type(e).__name__.lower()
-            if current_task_id:
-                logger.info(
-                    f"Stream interrupted with {error_type}, attempting recovery",
-                    extra={"task_id": current_task_id, "error": str(e)},
-                )
-                recovery_kwargs = {k: v for k, v in kwargs.items() if k != "task_id"}
-                recovered_result = (
-                    await StreamingHandler._try_recover_from_interruption(
-                        client=client,
-                        task_id=current_task_id,
-                        new_messages=new_messages,
-                        agent_card=agent_card,
-                        result_parts=result_parts,
-                        **recovery_kwargs,
-                    )
-                )
-                if recovered_result:
-                    logger.info(
-                        f"Successfully recovered task after {error_type}",
-                        extra={
-                            "task_id": current_task_id,
-                            "status": str(recovered_result.get("status")),
-                        },
-                    )
-                    return recovered_result
-
-                logger.warning(
-                    f"Failed to recover from {error_type}, returning failure",
-                    extra={
-                        "task_id": current_task_id,
-                        "error_type": error_type,
-                        "original_error": str(e),
-                    },
-                )
-
-            error_msg = f"Connection error during streaming: {e!s}"
-            status_code = None
-
-            error_message = Message(
-                role=Role.agent,
-                message_id=str(uuid.uuid4()),
-                parts=[Part(root=TextPart(text=error_msg))],
-                context_id=params.context_id,
-                task_id=task_id,
-            )
-            new_messages.append(error_message)
-
-            crewai_event_bus.emit(
-                agent_branch,
-                A2AConnectionErrorEvent(
-                    endpoint=params.endpoint,
-                    error=str(e),
-                    error_type=error_type,
-                    status_code=status_code,
-                    a2a_agent_name=params.a2a_agent_name,
-                    operation="streaming",
-                    context_id=params.context_id,
-                    task_id=task_id,
-                    from_task=params.from_task,
-                    from_agent=params.from_agent,
-                ),
-            )
-            crewai_event_bus.emit(
-                agent_branch,
-                A2AResponseReceivedEvent(
-                    response=error_msg,
-                    turn_number=params.turn_number,
-                    context_id=params.context_id,
-                    is_multiturn=params.is_multiturn,
-                    status="failed",
-                    final=True,
-                    agent_role=params.agent_role,
-                    endpoint=params.endpoint,
-                    a2a_agent_name=params.a2a_agent_name,
-                    from_task=params.from_task,
-                    from_agent=params.from_agent,
-                ),
-            )
-            return TaskStateResult(
-                status=TaskState.failed,
+                status=TASK_STATE_FAILED,
                 error=error_msg,
                 history=new_messages,
             )
 
         except Exception as e:
-            logger.exception(
-                "Unexpected error during streaming",
+            logger.warning(
+                "Unexpected stream error",
                 extra={
                     "task_id": current_task_id,
+                    "error": str(e),
                     "error_type": type(e).__name__,
-                    "endpoint": params.endpoint,
                 },
+                exc_info=True,
             )
-            error_msg = f"Unexpected error during streaming: {type(e).__name__}: {e!s}"
-            error_type = "unexpected_error"
-            status_code = None
 
-            error_message = Message(
-                role=Role.agent,
-                message_id=str(uuid.uuid4()),
-                parts=[Part(root=TextPart(text=error_msg))],
+            if current_task_id:
+                recovery_result = await StreamingHandler._try_recover_from_interruption(
+                    client=client,
+                    task_id=current_task_id,
+                    new_messages=new_messages,
+                    agent_card=agent_card,
+                    result_parts=result_parts,
+                    **kwargs,
+                )
+                if recovery_result:
+                    return recovery_result
+
+            error_msg = f"Unexpected error during streaming: {e!s}"
+            error_message = new_text_message(
+                error_msg,
+                role=ROLE_AGENT,
                 context_id=params.context_id,
-                task_id=task_id,
+                task_id=current_task_id,
             )
             new_messages.append(error_message)
 
@@ -582,12 +507,11 @@ class StreamingHandler:
                 A2AConnectionErrorEvent(
                     endpoint=params.endpoint,
                     error=str(e),
-                    error_type=error_type,
-                    status_code=status_code,
+                    error_type="unexpected_error",
                     a2a_agent_name=params.a2a_agent_name,
                     operation="streaming",
                     context_id=params.context_id,
-                    task_id=task_id,
+                    task_id=current_task_id,
                     from_task=params.from_task,
                     from_agent=params.from_agent,
                 ),
@@ -609,38 +533,33 @@ class StreamingHandler:
                 ),
             )
             return TaskStateResult(
-                status=TaskState.failed,
+                status=TASK_STATE_FAILED,
                 error=error_msg,
                 history=new_messages,
             )
 
-        finally:
-            aclose = getattr(event_stream, "aclose", None)
-            if aclose:
-                try:
-                    await aclose()
-                except Exception as close_error:
-                    crewai_event_bus.emit(
-                        agent_branch,
-                        A2AConnectionErrorEvent(
-                            endpoint=params.endpoint,
-                            error=str(close_error),
-                            error_type="stream_close_error",
-                            a2a_agent_name=params.a2a_agent_name,
-                            operation="stream_close",
-                            context_id=params.context_id,
-                            task_id=task_id,
-                            from_task=params.from_task,
-                            from_agent=params.from_agent,
-                        ),
-                    )
-
         if final_result:
             return final_result
 
+        response_text = " ".join(result_parts) if result_parts else ""
+        crewai_event_bus.emit(
+            agent_branch,
+            A2AResponseReceivedEvent(
+                response=response_text,
+                turn_number=params.turn_number,
+                context_id=params.context_id,
+                is_multiturn=params.is_multiturn,
+                status="completed",
+                final=True,
+                agent_role=params.agent_role,
+                endpoint=params.endpoint,
+                a2a_agent_name=params.a2a_agent_name,
+                from_task=params.from_task,
+                from_agent=params.from_agent,
+            ),
+        )
         return TaskStateResult(
-            status=TaskState.completed,
-            result=" ".join(result_parts) if result_parts else "",
+            status=TASK_STATE_FAILED,
+            error="Stream ended without terminal state",
             history=new_messages,
-            agent_card=agent_card.model_dump(exclude_none=True),
         )

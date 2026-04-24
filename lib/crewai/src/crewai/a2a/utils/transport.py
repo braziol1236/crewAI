@@ -12,6 +12,7 @@ from typing import Final, Literal
 
 from a2a.types import AgentCard, AgentInterface
 
+from crewai.a2a._compat import agent_card_interfaces, agent_card_preferred_transport, agent_card_url
 from crewai.events.event_bus import crewai_event_bus
 from crewai.events.types.a2a_events import A2ATransportNegotiatedEvent
 
@@ -85,23 +86,21 @@ def _get_server_interfaces(agent_card: AgentCard) -> list[AgentInterface]:
         List of AgentInterface objects representing all available endpoints.
     """
     interfaces: list[AgentInterface] = []
-
-    primary_transport = agent_card.preferred_transport or JSONRPC_TRANSPORT
-    interfaces.append(
-        AgentInterface(
-            transport=primary_transport,
-            url=agent_card.url,
+    for interface in agent_card_interfaces(agent_card):
+        is_duplicate = any(
+            i.url == interface.url and i.protocol_binding == interface.protocol_binding
+            for i in interfaces
         )
-    )
+        if not is_duplicate:
+            interfaces.append(interface)
 
-    if agent_card.additional_interfaces:
-        for interface in agent_card.additional_interfaces:
-            is_duplicate = any(
-                i.url == interface.url and i.transport == interface.transport
-                for i in interfaces
+    if not interfaces:
+        interfaces.append(
+            AgentInterface(
+                url=agent_card_url(agent_card),
+                protocol_binding=JSONRPC_TRANSPORT,
             )
-            if not is_duplicate:
-                interfaces.append(interface)
+        )
 
     return interfaces
 
@@ -149,11 +148,11 @@ def negotiate_transport(
     )
 
     server_interfaces = _get_server_interfaces(agent_card)
-    server_transports = [i.transport.upper() for i in server_interfaces]
+    server_transports = [i.protocol_binding.upper() for i in server_interfaces]
 
     transport_to_interface: dict[str, AgentInterface] = {}
     for interface in server_interfaces:
-        transport_upper = interface.transport.upper()
+        transport_upper = interface.protocol_binding.upper()
         if transport_upper not in transport_to_interface:
             transport_to_interface[transport_upper] = interface
 
@@ -162,19 +161,19 @@ def negotiate_transport(
     if client_preferred and client_preferred in transport_to_interface:
         interface = transport_to_interface[client_preferred]
         result = NegotiatedTransport(
-            transport=interface.transport,
+            transport=interface.protocol_binding,
             url=interface.url,
             source="client_preferred",
         )
     else:
-        server_preferred = (agent_card.preferred_transport or JSONRPC_TRANSPORT).upper()
+        server_preferred = (agent_card_preferred_transport(agent_card) or JSONRPC_TRANSPORT).upper()
         if (
             server_preferred in client_transports
             and server_preferred in transport_to_interface
         ):
             interface = transport_to_interface[server_preferred]
             result = NegotiatedTransport(
-                transport=interface.transport,
+                transport=interface.protocol_binding,
                 url=interface.url,
                 source="server_preferred",
             )
@@ -183,7 +182,7 @@ def negotiate_transport(
                 if transport in transport_to_interface:
                     interface = transport_to_interface[transport]
                     result = NegotiatedTransport(
-                        transport=interface.transport,
+                        transport=interface.protocol_binding,
                         url=interface.url,
                         source="fallback",
                     )
@@ -199,14 +198,14 @@ def negotiate_transport(
         crewai_event_bus.emit(
             None,
             A2ATransportNegotiatedEvent(
-                endpoint=endpoint or agent_card.url,
+                endpoint=endpoint or agent_card_url(agent_card),
                 a2a_agent_name=a2a_agent_name or agent_card.name,
                 negotiated_transport=result.transport,
                 negotiated_url=result.url,
                 source=result.source,
                 client_supported_transports=client_transports,
                 server_supported_transports=server_transports,
-                server_preferred_transport=agent_card.preferred_transport
+                server_preferred_transport=agent_card_preferred_transport(agent_card)
                 or JSONRPC_TRANSPORT,
                 client_preferred_transport=client_preferred,
             ),
