@@ -14,13 +14,16 @@ from typing import TYPE_CHECKING
 
 from a2a.client.errors import A2AClientError
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
-from google.protobuf.json_format import ParseDict  # type: ignore[import-untyped]
-
-from crewai.a2a._compat import agent_card_to_dict, agent_card_protocol_version, proto_copy
 from aiocache import cached  # type: ignore[import-untyped]
 from aiocache.serializers import PickleSerializer  # type: ignore[import-untyped]
+from google.protobuf.json_format import ParseDict  # type: ignore[import-untyped]
 import httpx
 
+from crewai.a2a._compat import (
+    agent_card_protocol_version,
+    agent_card_to_dict,
+    proto_copy,
+)
 from crewai.a2a.auth.client_schemes import APIKeyAuth, HTTPDigestAuth
 from crewai.a2a.auth.utils import (
     _auth_store,

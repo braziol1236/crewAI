@@ -13,11 +13,15 @@ import os
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
 from urllib.parse import urlparse
 
+from a2a.helpers.proto_helpers import (
+    new_data_artifact,
+    new_text_artifact,
+    new_text_message as new_agent_text_message,
+)
 from a2a.server.agent_execution import RequestContext
 from a2a.server.events import EventQueue
 from a2a.types import (
     Artifact,
-    InternalError,
     InvalidParamsError,
     Message,
     Part,
@@ -26,28 +30,20 @@ from a2a.types import (
     TaskStatus,
     TaskStatusUpdateEvent,
 )
-from a2a.helpers.proto_helpers import (
-    new_data_artifact,
-    new_text_artifact,
-    new_text_message as new_agent_text_message,
-)
 from a2a.utils.errors import A2AError as ServerError
+from aiocache import SimpleMemoryCache, caches  # type: ignore[import-untyped]
+from pydantic import BaseModel
+from typing_extensions import TypedDict
 
 from crewai.a2a._compat import (
-    ROLE_AGENT,
     TASK_STATE_CANCELED,
     TASK_STATE_COMPLETED,
     TASK_STATE_FAILED,
     part_has_data,
     part_has_file,
     part_is_text,
-    part_text,
     proto_copy,
 )
-from aiocache import SimpleMemoryCache, caches  # type: ignore[import-untyped]
-from pydantic import BaseModel
-from typing_extensions import TypedDict
-
 from crewai.a2a.utils.agent_card import _get_server_config
 from crewai.a2a.utils.content_type import validate_message_parts
 from crewai.events.event_bus import crewai_event_bus
@@ -81,7 +77,9 @@ def _get_data_parts(parts: list[Part]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for part in parts:
         if part_has_data(part):
-            from google.protobuf.json_format import MessageToDict  # type: ignore[import-untyped]
+            from google.protobuf.json_format import (
+                MessageToDict,  # type: ignore[import-untyped]
+            )
 
             val = MessageToDict(part.data)
             if isinstance(val, dict):

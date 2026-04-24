@@ -14,7 +14,6 @@ import json
 from types import MethodType
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from a2a.types import Role, TaskState
 from pydantic import BaseModel, ValidationError
 
 from crewai.a2a._compat import (

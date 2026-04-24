@@ -4,19 +4,12 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
-import uuid
 
 from a2a.client.errors import A2AClientError
 from a2a.types import (
     AgentCard,
     Message,
-    Part,
-    Role,
     StreamResponse,
-    Task,
-    TaskArtifactUpdateEvent,
-    TaskState,
-    TaskStatusUpdateEvent,
 )
 from typing_extensions import NotRequired, TypedDict
 
@@ -31,12 +24,9 @@ from crewai.a2a._compat import (
     TASK_STATE_SUBMITTED,
     TASK_STATE_WORKING,
     agent_card_to_dict,
-    is_stream_artifact_update,
     is_stream_message,
-    is_stream_status_update,
     is_stream_task,
     new_text_message,
-    new_text_part,
     part_is_text,
     part_text,
 )

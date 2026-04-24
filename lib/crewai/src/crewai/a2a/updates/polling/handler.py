@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import time
 from typing import TYPE_CHECKING, Any
-import uuid
 
 from a2a.client import Client
 from a2a.client.errors import A2AClientError
@@ -13,18 +12,14 @@ from a2a.types import (
     AgentCard,
     GetTaskRequest,
     Message,
-    Part,
-    Role,
-    TaskState,
 )
+from typing_extensions import Unpack
 
 from crewai.a2a._compat import (
     ROLE_AGENT,
     TASK_STATE_FAILED,
     new_text_message,
 )
-from typing_extensions import Unpack
-
 from crewai.a2a.errors import A2APollingTimeoutError
 from crewai.a2a.task_helpers import (
     ACTIONABLE_STATES,

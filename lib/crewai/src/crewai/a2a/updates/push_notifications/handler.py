@@ -4,26 +4,20 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any
-import uuid
 
 from a2a.client import Client
 from a2a.client.errors import A2AClientError
 from a2a.types import (
     AgentCard,
     Message,
-    Part,
-    Role,
-    TaskState,
 )
+from typing_extensions import Unpack
 
 from crewai.a2a._compat import (
     ROLE_AGENT,
     TASK_STATE_FAILED,
     new_text_message,
-    new_text_part,
 )
-from typing_extensions import Unpack
-
 from crewai.a2a.task_helpers import (
     TaskStateResult,
     process_task_state,

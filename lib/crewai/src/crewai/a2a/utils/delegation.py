@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 from collections.abc import AsyncIterator, Callable, MutableMapping
 import concurrent.futures
 from contextlib import asynccontextmanager
@@ -12,7 +11,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Final, Literal
 import uuid
 
-from a2a.client import Client, ClientConfig, ClientFactory
+from a2a.client import Client, ClientFactory
 from a2a.types import (
     AgentCard,
     Message,
@@ -21,11 +20,11 @@ from a2a.types import (
     TaskPushNotificationConfig,
 )
 import httpx
+from pydantic import BaseModel
 
 from crewai.a2a._compat import (
     ROLE_USER,
     agent_card_interfaces,
-    agent_card_preferred_transport,
     agent_card_protocol_version,
     agent_card_to_dict,
     agent_card_url,
@@ -33,8 +32,6 @@ from crewai.a2a._compat import (
     new_text_part,
     proto_copy,
 )
-from pydantic import BaseModel
-
 from crewai.a2a.auth.client_schemes import APIKeyAuth, HTTPDigestAuth
 from crewai.a2a.auth.utils import (
     _auth_store,
@@ -50,8 +47,6 @@ from crewai.a2a.task_helpers import TaskStateResult
 from crewai.a2a.types import (
     HANDLER_REGISTRY,
     HandlerType,
-    PartsDict,
-    PartsMetadataDict,
     TransportType,
 )
 from crewai.a2a.updates import (

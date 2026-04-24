@@ -10,8 +10,6 @@ See: https://a2a-protocol.org/latest/topics/extensions/
 
 from __future__ import annotations
 
-from typing import Any
-
 from a2a.client.interceptors import BeforeArgs, ClientCallInterceptor
 from a2a.extensions.common import (
     HTTP_EXTENSION_HEADER,

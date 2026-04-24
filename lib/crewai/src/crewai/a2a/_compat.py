@@ -78,7 +78,9 @@ ROLE_AGENT = Role.ROLE_AGENT
 # Protobuf objects don't have model_dump() / model_copy().
 # ---------------------------------------------------------------------------
 
-from google.protobuf.json_format import MessageToDict  # type: ignore[import-untyped]  # noqa: E402
+from google.protobuf.json_format import (  # noqa: E402
+    MessageToDict,
+)
 
 
 def proto_to_json(msg: Any) -> str:

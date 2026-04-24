@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Final
-import uuid
 
 from a2a.client import Client
 from a2a.client.errors import A2AClientError
@@ -13,22 +12,15 @@ from a2a.types import (
     AgentCard,
     GetTaskRequest,
     Message,
-    Part,
-    Role,
-    StreamResponse,
     SubscribeToTaskRequest,
     Task,
     TaskArtifactUpdateEvent,
-    TaskState,
-    TaskStatusUpdateEvent,
 )
 from typing_extensions import Unpack
 
 from crewai.a2a._compat import (
     ROLE_AGENT,
     TASK_STATE_FAILED,
-    agent_card_to_dict,
-    is_status_update_final,
     is_stream_artifact_update,
     is_stream_message,
     is_stream_status_update,
