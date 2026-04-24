@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
 from urllib.parse import urlparse
 
 from a2a.helpers.proto_helpers import (
-    new_data_artifact,
+    new_artifact,
     new_text_artifact,
     new_text_message as new_agent_text_message,
 )
@@ -286,9 +286,17 @@ def _create_result_artifact(
     """
     artifact_name = f"result_{task_id}"
     if isinstance(result, dict):
-        return new_data_artifact(artifact_name, result)
+        from google.protobuf import struct_pb2
+
+        val = struct_pb2.Value()
+        val.struct_value.update(result)
+        return new_artifact([Part(data=val)], artifact_name)
     if isinstance(result, BaseModel):
-        return new_data_artifact(artifact_name, result.model_dump())
+        from google.protobuf import struct_pb2
+
+        val = struct_pb2.Value()
+        val.struct_value.update(result.model_dump())
+        return new_artifact([Part(data=val)], artifact_name)
     return new_text_artifact(artifact_name, str(result))
 
 
