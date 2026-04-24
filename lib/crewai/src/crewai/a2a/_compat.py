@@ -10,6 +10,7 @@ from typing import Any
 
 from a2a.client.errors import A2AClientError
 
+
 # ---------------------------------------------------------------------------
 # Error re-exports
 # In v0.3 the class was called A2AClientHTTPError; v1.0 renamed it to
@@ -19,7 +20,7 @@ from a2a.client.errors import A2AClientError
 A2AClientHTTPError = A2AClientError  # back-compat alias
 
 # ---------------------------------------------------------------------------
-# Type helpers  – Protobuf Part access
+# Type helpers - Protobuf Part access
 # In v0.3 Part was a Pydantic discriminated-union with ``part.root.kind``
 # and ``part.root.text``; in v1.0 Part is a protobuf message with a
 # ``content`` oneof.
@@ -55,6 +56,7 @@ def part_has_file(part: Part) -> bool:
 # ---------------------------------------------------------------------------
 
 from a2a.types import Role, TaskState  # noqa: E402
+
 
 # TaskState aliases
 TASK_STATE_SUBMITTED = TaskState.TASK_STATE_SUBMITTED
@@ -94,12 +96,11 @@ def agent_card_to_dict(agent_card: Any, *, exclude_none: bool = True) -> dict[st
 
     Works like ``agent_card.model_dump(exclude_none=True)`` did in v0.3.
     """
-    d = MessageToDict(
+    return MessageToDict(
         agent_card,
         preserving_proto_field_name=True,
         always_print_fields_with_no_presence=not exclude_none,
     )
-    return d
 
 
 def proto_copy(msg: Any) -> Any:
@@ -145,7 +146,7 @@ def new_text_message(
     )
 
 
-def make_send_request(message: Message) -> "SendMessageRequest":
+def make_send_request(message: Message) -> Any:
     """Wrap a Message in a SendMessageRequest (v1.0 API).
 
     In v0.3, ``client.send_message(message)`` accepted a bare ``Message``.
@@ -215,8 +216,6 @@ def agent_card_protocol_version(agent_card: AgentCard) -> str:
 # ---------------------------------------------------------------------------
 from a2a.types import (  # noqa: E402
     StreamResponse,
-    Task,
-    TaskArtifactUpdateEvent,
     TaskStatusUpdateEvent,
 )
 
@@ -280,6 +279,7 @@ def create_client_config(
 # ---------------------------------------------------------------------------
 
 from a2a.types import GetTaskRequest, SubscribeToTaskRequest  # noqa: E402
+
 
 # Expose v0.3 names as aliases for the v1.0 types
 TaskQueryParams = GetTaskRequest
