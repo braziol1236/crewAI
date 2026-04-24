@@ -31,7 +31,7 @@ from a2a.types import Part  # noqa: E402
 
 def part_is_text(part: Part) -> bool:
     """Return True when the Part carries text content."""
-    return part.HasField("text")
+    return part.HasField("text")  # type: ignore[no-any-return]
 
 
 def part_text(part: Part) -> str:
@@ -41,12 +41,12 @@ def part_text(part: Part) -> str:
 
 def part_has_data(part: Part) -> bool:
     """Return True when the Part carries structured data."""
-    return part.HasField("data")
+    return part.HasField("data")  # type: ignore[no-any-return]
 
 
 def part_has_file(part: Part) -> bool:
     """Return True when the Part carries a file (url or raw bytes)."""
-    return part.HasField("url") or part.HasField("raw")
+    return part.HasField("url") or part.HasField("raw")  # type: ignore[no-any-return]
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +78,7 @@ ROLE_AGENT = Role.ROLE_AGENT
 # Protobuf objects don't have model_dump() / model_copy().
 # ---------------------------------------------------------------------------
 
-from google.protobuf.json_format import MessageToDict  # noqa: E402
+from google.protobuf.json_format import MessageToDict  # type: ignore[import-untyped]  # noqa: E402
 
 
 def proto_to_json(msg: Any) -> str:
@@ -88,7 +88,7 @@ def proto_to_json(msg: Any) -> str:
     """
     from google.protobuf.json_format import MessageToJson
 
-    return MessageToJson(msg, preserving_proto_field_name=True, indent=2)
+    return MessageToJson(msg, preserving_proto_field_name=True, indent=2)  # type: ignore[no-any-return]
 
 
 def agent_card_to_dict(agent_card: Any, *, exclude_none: bool = True) -> dict[str, Any]:
@@ -96,7 +96,7 @@ def agent_card_to_dict(agent_card: Any, *, exclude_none: bool = True) -> dict[st
 
     Works like ``agent_card.model_dump(exclude_none=True)`` did in v0.3.
     """
-    return MessageToDict(
+    return MessageToDict(  # type: ignore[no-any-return]
         agent_card,
         preserving_proto_field_name=True,
         always_print_fields_with_no_presence=not exclude_none,
@@ -127,7 +127,7 @@ def new_text_part(text: str, **kwargs: Any) -> Part:
 def new_text_message(
     text: str,
     *,
-    role: int = ROLE_AGENT,
+    role: Any = ROLE_AGENT,
     message_id: str | None = None,
     context_id: str | None = None,
     task_id: str | None = None,
@@ -173,7 +173,7 @@ def agent_card_url(agent_card: AgentCard) -> str:
     In v1.0 the URL lives inside ``supported_interfaces``.
     """
     if agent_card.supported_interfaces:
-        return agent_card.supported_interfaces[0].url
+        return agent_card.supported_interfaces[0].url  # type: ignore[no-any-return]
     return ""
 
 
@@ -184,7 +184,7 @@ def agent_card_preferred_transport(agent_card: AgentCard) -> str:
     In v1.0 it's the protocol_binding of the first supported_interface.
     """
     if agent_card.supported_interfaces:
-        return agent_card.supported_interfaces[0].protocol_binding
+        return agent_card.supported_interfaces[0].protocol_binding  # type: ignore[no-any-return]
     return "JSONRPC"
 
 
@@ -224,22 +224,22 @@ from a2a.types import (  # noqa: E402
 
 def is_stream_message(chunk: StreamResponse) -> bool:
     """Check if a StreamResponse contains a Message."""
-    return chunk.HasField("message")
+    return chunk.HasField("message")  # type: ignore[no-any-return]
 
 
 def is_stream_task(chunk: StreamResponse) -> bool:
     """Check if a StreamResponse contains a Task."""
-    return chunk.HasField("task")
+    return chunk.HasField("task")  # type: ignore[no-any-return]
 
 
 def is_stream_status_update(chunk: StreamResponse) -> bool:
     """Check if a StreamResponse contains a TaskStatusUpdateEvent."""
-    return chunk.HasField("status_update")
+    return chunk.HasField("status_update")  # type: ignore[no-any-return]
 
 
 def is_stream_artifact_update(chunk: StreamResponse) -> bool:
     """Check if a StreamResponse contains a TaskArtifactUpdateEvent."""
-    return chunk.HasField("artifact_update")
+    return chunk.HasField("artifact_update")  # type: ignore[no-any-return]
 
 
 # ---------------------------------------------------------------------------
