@@ -458,9 +458,7 @@ async def _execute_impl(
                 from_agent=agent,
             ),
         )
-        raise ServerError(
-            error=InternalError(message=f"Task execution failed: {e}")
-        ) from e
+        raise ServerError(f"Task execution failed: {e}") from e
 
 
 async def execute_with_extensions(

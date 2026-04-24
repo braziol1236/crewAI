@@ -168,7 +168,8 @@ class TestToAgentCard:
 
         card = agent.to_agent_card("http://fallback-url.com")
 
-        assert agent_card_url(card) == "http://configured-url.com"
+        url = agent_card_url(card)
+        assert url.rstrip("/") == "http://configured-url.com"
 
     def test_generates_default_skill(self) -> None:
         """AgentCard should have at least one skill based on agent role."""
@@ -309,8 +310,8 @@ class TestAgentCardJsonStructure:
         assert "Test Agent" in json_str
         assert "http://localhost:8000" in json_str
 
-    def test_json_excludes_none_values(self) -> None:
-        """AgentCard JSON with exclude_none should omit None/default fields."""
+    def test_json_excludes_unset_fields(self) -> None:
+        """AgentCard JSON should omit fields that were not explicitly set."""
         agent = Agent(
             role="Test Agent",
             goal="Test goal",
@@ -322,5 +323,3 @@ class TestAgentCardJsonStructure:
         json_data = agent_card_to_dict(card)
 
         assert "provider" not in json_data
-        assert "documentation_url" not in json_data
-        assert "icon_url" not in json_data

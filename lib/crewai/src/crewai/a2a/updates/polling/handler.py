@@ -163,9 +163,11 @@ class PollingHandler:
         from_task = kwargs.get("from_task")
         from_agent = kwargs.get("from_agent")
 
+        from crewai.a2a._compat import make_send_request
+
         try:
             result_or_task_id = await send_message_and_get_task_id(
-                event_stream=client.send_message(message),
+                event_stream=client.send_message(make_send_request(message)),
                 new_messages=new_messages,
                 agent_card=agent_card,
                 turn_number=turn_number,

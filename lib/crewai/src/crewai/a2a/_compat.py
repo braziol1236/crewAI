@@ -145,6 +145,17 @@ def new_text_message(
     )
 
 
+def make_send_request(message: Message) -> "SendMessageRequest":
+    """Wrap a Message in a SendMessageRequest (v1.0 API).
+
+    In v0.3, ``client.send_message(message)`` accepted a bare ``Message``.
+    In v1.0, it expects ``SendMessageRequest(message=message)``.
+    """
+    from a2a.types import SendMessageRequest
+
+    return SendMessageRequest(message=message)
+
+
 # ---------------------------------------------------------------------------
 # AgentCard field access helpers
 # v0.3: agent_card.url, agent_card.preferred_transport, agent_card.additional_interfaces

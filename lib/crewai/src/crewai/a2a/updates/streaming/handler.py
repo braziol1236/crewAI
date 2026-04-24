@@ -278,7 +278,9 @@ class StreamingHandler:
 
         result_parts: list[str] = []
         final_result: TaskStateResult | None = None
-        event_stream = client.send_message(message)
+        from crewai.a2a._compat import make_send_request
+
+        event_stream = client.send_message(make_send_request(message))
         chunk_index = 0
         current_task_id: str | None = task_id
         current_task: Task | None = None

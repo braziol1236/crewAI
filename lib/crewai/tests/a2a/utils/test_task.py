@@ -39,12 +39,13 @@ def mock_task(mock_context: MagicMock) -> MagicMock:
 @pytest.fixture
 def mock_context() -> MagicMock:
     """Create a mock RequestContext."""
+    from crewai.a2a._compat import ROLE_USER, new_text_message
+
     context = MagicMock(spec=RequestContext)
     context.task_id = "test-task-123"
     context.context_id = "test-context-456"
     context.get_user_input.return_value = "Test user message"
-    context.message = MagicMock(spec=Message)
-    context.message.parts = []
+    context.message = new_text_message("Test user message", role=ROLE_USER)
     context.current_task = None
     return context
 

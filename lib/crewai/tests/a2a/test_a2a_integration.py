@@ -3,10 +3,11 @@ from __future__ import annotations
 import os
 import uuid
 
+import httpx
 import pytest
 import pytest_asyncio
 
-from a2a.client import ClientFactory
+from a2a.client import A2ACardResolver, ClientFactory
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, Message, Part, Role, TaskState
 
 from crewai.a2a._compat import (
@@ -15,6 +16,7 @@ from crewai.a2a._compat import (
     TASK_STATE_COMPLETED,
     TASK_STATE_FAILED,
     agent_card_url,
+    make_send_request,
     new_text_message,
     new_text_part,
 )
@@ -26,11 +28,25 @@ A2A_TEST_ENDPOINT = os.getenv("A2A_TEST_ENDPOINT", "http://localhost:9999")
 
 
 @pytest_asyncio.fixture
-async def a2a_client():
+async def card_resolver():
+    """Create an A2ACardResolver for the test server."""
+    async with httpx.AsyncClient() as http_client:
+        resolver = A2ACardResolver(http_client, A2A_TEST_ENDPOINT)
+        yield resolver
+
+
+@pytest_asyncio.fixture
+async def agent_card(card_resolver) -> AgentCard:
+    """Fetch the real agent card from the server."""
+    return await card_resolver.get_agent_card()
+
+
+@pytest_asyncio.fixture
+async def a2a_client(agent_card):
     """Create A2A client for test server."""
-    client = await ClientFactory.connect(A2A_TEST_ENDPOINT)
+    factory = ClientFactory()
+    client = factory.create(agent_card)
     yield client
-    await client.close()
 
 
 @pytest.fixture
@@ -39,20 +55,14 @@ def test_message() -> Message:
     return new_text_message("What is 2 + 2?", role=ROLE_USER)
 
 
-@pytest_asyncio.fixture
-async def agent_card(a2a_client) -> AgentCard:
-    """Fetch the real agent card from the server."""
-    return await a2a_client.get_card()
-
-
 class TestA2AAgentCardFetching:
     """Integration tests for agent card fetching."""
 
     @pytest.mark.vcr()
     @pytest.mark.asyncio
-    async def test_fetch_agent_card(self, a2a_client) -> None:
+    async def test_fetch_agent_card(self, card_resolver) -> None:
         """Test fetching an agent card from the server."""
-        card = await a2a_client.get_card()
+        card = await card_resolver.get_agent_card()
 
         assert card is not None
         assert card.name == "GPT Assistant"
@@ -133,7 +143,7 @@ class TestA2ATaskOperations:
         from crewai.a2a._compat import is_stream_task
 
         final_task: Task | None = None
-        async for event in a2a_client.send_message(test_message):
+        async for event in a2a_client.send_message(make_send_request(test_message)):
             if isinstance(event, StreamResponse) and is_stream_task(event):
                 final_task = event.task
 
