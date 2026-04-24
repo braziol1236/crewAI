@@ -1229,7 +1229,7 @@ class AgentExecutor(Flow[AgentExecutorState], BaseAgentExecutor):  # type: ignor
                 printer=PRINTER,
                 from_task=self.task,
                 from_agent=self.agent,
-                response_model=self.response_model,
+                response_model=self._loop_response_model(),
                 executor_context=self,
                 verbose=self.agent.verbose,
             )
@@ -1317,7 +1317,7 @@ class AgentExecutor(Flow[AgentExecutorState], BaseAgentExecutor):  # type: ignor
                 available_functions=None,
                 from_task=self.task,
                 from_agent=self.agent,
-                response_model=self.response_model,
+                response_model=self._loop_response_model(),
                 executor_context=self,
                 verbose=self.agent.verbose,
             )

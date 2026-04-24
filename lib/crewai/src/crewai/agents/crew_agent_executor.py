@@ -334,6 +334,7 @@ class CrewAgentExecutor(BaseAgentExecutor):
 
                 enforce_rpm_limit(self.request_within_rpm_limit)
 
+                loop_response_model = self._loop_response_model()
                 answer = get_llm_response(
                     llm=cast("BaseLLM", self.llm),
                     messages=self.messages,
@@ -341,11 +342,11 @@ class CrewAgentExecutor(BaseAgentExecutor):
                     printer=PRINTER,
                     from_task=self.task,
                     from_agent=self.agent,
-                    response_model=self.response_model,
+                    response_model=loop_response_model,
                     executor_context=self,
                     verbose=self.agent.verbose,
                 )
-                if self.response_model is not None:
+                if loop_response_model is not None:
                     try:
                         if isinstance(answer, BaseModel):
                             output_json = answer.model_dump_json()
@@ -355,7 +356,7 @@ class CrewAgentExecutor(BaseAgentExecutor):
                                 text=output_json,
                             )
                         else:
-                            self.response_model.model_validate_json(answer)
+                            loop_response_model.model_validate_json(answer)
                             formatted_answer = AgentFinish(
                                 thought="",
                                 output=answer,
@@ -486,7 +487,7 @@ class CrewAgentExecutor(BaseAgentExecutor):
                     available_functions=None,
                     from_task=self.task,
                     from_agent=self.agent,
-                    response_model=self.response_model,
+                    response_model=self._loop_response_model(),
                     executor_context=self,
                     verbose=self.agent.verbose,
                 )
@@ -1142,6 +1143,7 @@ class CrewAgentExecutor(BaseAgentExecutor):
 
                 enforce_rpm_limit(self.request_within_rpm_limit)
 
+                loop_response_model = self._loop_response_model()
                 answer = await aget_llm_response(
                     llm=cast("BaseLLM", self.llm),
                     messages=self.messages,
@@ -1149,12 +1151,12 @@ class CrewAgentExecutor(BaseAgentExecutor):
                     printer=PRINTER,
                     from_task=self.task,
                     from_agent=self.agent,
-                    response_model=self.response_model,
+                    response_model=loop_response_model,
                     executor_context=self,
                     verbose=self.agent.verbose,
                 )
 
-                if self.response_model is not None:
+                if loop_response_model is not None:
                     try:
                         if isinstance(answer, BaseModel):
                             output_json = answer.model_dump_json()
@@ -1164,7 +1166,7 @@ class CrewAgentExecutor(BaseAgentExecutor):
                                 text=output_json,
                             )
                         else:
-                            self.response_model.model_validate_json(answer)
+                            loop_response_model.model_validate_json(answer)
                             formatted_answer = AgentFinish(
                                 thought="",
                                 output=answer,
@@ -1295,7 +1297,7 @@ class CrewAgentExecutor(BaseAgentExecutor):
                     available_functions=None,
                     from_task=self.task,
                     from_agent=self.agent,
-                    response_model=self.response_model,
+                    response_model=self._loop_response_model(),
                     executor_context=self,
                     verbose=self.agent.verbose,
                 )
