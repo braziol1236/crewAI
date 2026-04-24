@@ -77,9 +77,7 @@ def _get_data_parts(parts: list[Part]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for part in parts:
         if part_has_data(part):
-            from google.protobuf.json_format import (
-                MessageToDict,  # type: ignore[import-untyped]
-            )
+            from google.protobuf.json_format import MessageToDict
 
             val = MessageToDict(part.data)
             if isinstance(val, dict):

@@ -16,7 +16,7 @@ from a2a.client.errors import A2AClientError
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from aiocache import cached  # type: ignore[import-untyped]
 from aiocache.serializers import PickleSerializer  # type: ignore[import-untyped]
-from google.protobuf.json_format import ParseDict  # type: ignore[import-untyped]
+from google.protobuf.json_format import ParseDict
 import httpx
 
 from crewai.a2a._compat import (
@@ -283,7 +283,7 @@ async def _afetch_agent_card_impl(
             )
             response.raise_for_status()
 
-            agent_card: AgentCard = ParseDict(response.json(), AgentCard())  # type: ignore[assignment]
+            agent_card = ParseDict(response.json(), AgentCard())
             fetch_time_ms = (time.perf_counter() - start_time) * 1000
             agent_card_dict = agent_card_to_dict(agent_card)
 

@@ -18,7 +18,7 @@ import logging
 from typing import Any, Literal
 
 from a2a.types import AgentCard, AgentCardSignature
-from google.protobuf.json_format import MessageToDict  # type: ignore[import-untyped]
+from google.protobuf.json_format import MessageToDict
 import jwt
 from pydantic import SecretStr
 

@@ -324,7 +324,7 @@ async def aexecute_a2a_delegation(
             turn_number=turn_number,
             agent_branch=agent_branch,
             agent_id=agent_id,
-            agent_role=agent_role,  # type: ignore[arg-type]
+            agent_role=agent_role,
             response_model=response_model,
             updates=updates,
             from_task=from_task,
