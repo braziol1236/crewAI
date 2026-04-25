@@ -1827,8 +1827,12 @@ class LLM(BaseLLM):
                             "id": getattr(tc, "id", f"call_{i}"),
                             "type": "function",
                             "function": {
-                                "name": getattr(tc.function, "name", "") if hasattr(tc, "function") else "",
-                                "arguments": getattr(tc.function, "arguments", "{}") if hasattr(tc, "function") else "{}",
+                                "name": getattr(tc.function, "name", "")
+                                if hasattr(tc, "function")
+                                else "",
+                                "arguments": getattr(tc.function, "arguments", "{}")
+                                if hasattr(tc, "function")
+                                else "{}",
                             },
                         }
                         for i, tc in enumerate(raw)
@@ -1839,10 +1843,14 @@ class LLM(BaseLLM):
                 # Execute each tool call
                 for tc in raw:
                     func_name = sanitize_tool_name(
-                        getattr(tc.function, "name", "") if hasattr(tc, "function") else ""
+                        getattr(tc.function, "name", "")
+                        if hasattr(tc, "function")
+                        else ""
                     )
                     func_args_str = (
-                        getattr(tc.function, "arguments", "{}") if hasattr(tc, "function") else "{}"
+                        getattr(tc.function, "arguments", "{}")
+                        if hasattr(tc, "function")
+                        else "{}"
                     )
                     tool_call_id = getattr(tc, "id", f"call_{func_name}")
 
@@ -1872,7 +1880,9 @@ class LLM(BaseLLM):
                             fn = available_functions[func_name]
                             tool_output = fn(**func_args)
                             t1 = datetime.now()
-                            record.output = str(tool_output) if tool_output is not None else ""
+                            record.output = (
+                                str(tool_output) if tool_output is not None else ""
+                            )
                             record.duration_ms = (t1 - t0).total_seconds() * 1000
                             crewai_event_bus.emit(
                                 self,
@@ -1908,11 +1918,13 @@ class LLM(BaseLLM):
                     result.tool_calls.append(record)
 
                     # Append tool result message for the model
-                    conversation.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "content": record.output,
-                    })
+                    conversation.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "content": record.output,
+                        }
+                    )
             else:
                 # Unexpected return type — treat as final text
                 result.text = str(raw)

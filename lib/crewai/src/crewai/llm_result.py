@@ -102,11 +102,11 @@ def _lookup_pricing(model: str) -> dict[str, float] | None:
     return None
 
 
-def estimate_cost_usd(
-    model: str, prompt_tokens: int, completion_tokens: int
-) -> float:
+def estimate_cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float:
     """Estimate the cost in USD for a given model and token counts."""
     pricing = _lookup_pricing(model)
     if not pricing:
         return 0.0
-    return (prompt_tokens * pricing["in"] + completion_tokens * pricing["out"]) / 1_000_000
+    return (
+        prompt_tokens * pricing["in"] + completion_tokens * pricing["out"]
+    ) / 1_000_000
