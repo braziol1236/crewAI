@@ -24,7 +24,7 @@ class ToolCallRecord(BaseModel):
     """
 
     name: str
-    input: dict = Field(default_factory=dict)
+    input: dict[str, Any] = Field(default_factory=dict)
     output: str = ""
     duration_ms: float = 0.0
     is_error: bool = False
