@@ -1705,7 +1705,7 @@ class LLM(BaseLLM):
         from_agent: BaseAgent | None = None,
         response_model: type[BaseModel] | None = None,
         max_iterations: int = 10,
-    ) -> str | LLMResult | Any:
+    ) -> str | Any:
         """High-level LLM call method.
 
         Args:
@@ -1797,7 +1797,7 @@ class LLM(BaseLLM):
             # Call the model WITHOUT available_functions so the internal
             # handler returns tool_calls as-is instead of executing them.
             raw = self._call_single(
-                messages=conversation,
+                messages=conversation,  # type: ignore[arg-type]
                 tools=tools,
                 callbacks=callbacks,
                 available_functions=None,  # Don't let inner layer execute
