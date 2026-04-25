@@ -32,6 +32,11 @@ from crewai.events.types.tool_usage_events import (
     ToolUsageFinishedEvent,
     ToolUsageStartedEvent,
 )
+from crewai.llm_result import (
+    LLMResult,
+    ToolCallRecord,
+    estimate_cost_usd as _estimate_cost_usd,
+)
 from crewai.llms.base_llm import (
     BaseLLM,
     JsonResponseFormat,
@@ -1699,7 +1704,8 @@ class LLM(BaseLLM):
         from_task: Task | None = None,
         from_agent: BaseAgent | None = None,
         response_model: type[BaseModel] | None = None,
-    ) -> str | Any:
+        max_iterations: int = 10,
+    ) -> str | LLMResult | Any:
         """High-level LLM call method.
 
         Args:
@@ -1716,16 +1722,238 @@ class LLM(BaseLLM):
             from_task: Optional Task that invoked the LLM
             from_agent: Optional Agent that invoked the LLM
             response_model: Optional Model that contains a pydantic response model.
+            max_iterations: Maximum number of tool-loop iterations (default 10).
+                           Only used when both ``tools`` and ``available_functions``
+                           are provided.
 
         Returns:
-            Union[str, Any]: Either a text response from the LLM (str) or
-                           the result of a tool function call (Any).
+            Union[str, LLMResult, Any]:
+                - ``str`` when called without tools (backwards compatible).
+                - ``LLMResult`` when called with tools and available_functions.
+                - ``Any`` when a tool call returns a non-string result in legacy mode.
 
         Raises:
             TypeError: If messages format is invalid
             ValueError: If response format is not supported
             LLMContextLengthExceededError: If input exceeds model's context limit
         """
+        # When tools AND available_functions are both provided, use the tool loop
+        # which returns an LLMResult with structured metadata.
+        if tools and available_functions:
+            return self._call_with_tool_loop(
+                messages=messages,
+                tools=tools,
+                callbacks=callbacks,
+                available_functions=available_functions,
+                from_task=from_task,
+                from_agent=from_agent,
+                response_model=response_model,
+                max_iterations=max_iterations,
+            )
+
+        # Original single-shot path — returns str (backwards compatible).
+        return self._call_single(
+            messages=messages,
+            tools=tools,
+            callbacks=callbacks,
+            available_functions=available_functions,
+            from_task=from_task,
+            from_agent=from_agent,
+            response_model=response_model,
+        )
+
+    def _call_with_tool_loop(
+        self,
+        messages: str | list[LLMMessage],
+        tools: list[dict[str, BaseTool]],
+        callbacks: list[Any] | None,
+        available_functions: dict[str, Any],
+        from_task: Task | None,
+        from_agent: BaseAgent | None,
+        response_model: type[BaseModel] | None,
+        max_iterations: int,
+    ) -> LLMResult:
+        """Run an LLM tool loop, returning a structured LLMResult.
+
+        Keeps calling the model until it stops requesting tool calls or
+        ``max_iterations`` is reached.
+        """
+        from crewai.types.usage_metrics import UsageMetrics
+
+        if isinstance(messages, str):
+            messages = [{"role": "user", "content": messages}]
+        # Work on a mutable copy so we can append assistant/tool messages.
+        conversation: list[dict[str, Any]] = list(messages)  # type: ignore[arg-type]
+
+        result = LLMResult(
+            text="",
+            tool_calls=[],
+            usage=UsageMetrics(),
+            cost_usd=0.0,
+            iterations=0,
+        )
+
+        for iteration in range(max_iterations):
+            # Call the model WITHOUT available_functions so the internal
+            # handler returns tool_calls as-is instead of executing them.
+            raw = self._call_single(
+                messages=conversation,
+                tools=tools,
+                callbacks=callbacks,
+                available_functions=None,  # Don't let inner layer execute
+                from_task=from_task,
+                from_agent=from_agent,
+                response_model=response_model,
+            )
+
+            result.iterations = iteration + 1
+
+            # Accumulate usage from this iteration
+            self._accumulate_usage(result)
+
+            # If we got a string back, the model is done (no tool calls).
+            if isinstance(raw, str):
+                result.text = raw
+                break
+
+            # If we got tool_calls (list), execute them and feed results back.
+            if isinstance(raw, list):
+                # Append assistant message with tool calls to conversation
+                assistant_msg: dict[str, Any] = {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": getattr(tc, "id", f"call_{i}"),
+                            "type": "function",
+                            "function": {
+                                "name": getattr(tc.function, "name", "") if hasattr(tc, "function") else "",
+                                "arguments": getattr(tc.function, "arguments", "{}") if hasattr(tc, "function") else "{}",
+                            },
+                        }
+                        for i, tc in enumerate(raw)
+                    ],
+                }
+                conversation.append(assistant_msg)
+
+                # Execute each tool call
+                for tc in raw:
+                    func_name = sanitize_tool_name(
+                        getattr(tc.function, "name", "") if hasattr(tc, "function") else ""
+                    )
+                    func_args_str = (
+                        getattr(tc.function, "arguments", "{}") if hasattr(tc, "function") else "{}"
+                    )
+                    tool_call_id = getattr(tc, "id", f"call_{func_name}")
+
+                    try:
+                        func_args = json.loads(func_args_str)
+                    except (json.JSONDecodeError, TypeError):
+                        func_args = {}
+
+                    record = ToolCallRecord(
+                        name=func_name,
+                        input=func_args,
+                    )
+
+                    if func_name in available_functions:
+                        t0 = datetime.now()
+                        started_at = t0
+                        crewai_event_bus.emit(
+                            self,
+                            event=ToolUsageStartedEvent(
+                                tool_name=func_name,
+                                tool_args=func_args,
+                                from_agent=from_agent,
+                                from_task=from_task,
+                            ),
+                        )
+                        try:
+                            fn = available_functions[func_name]
+                            tool_output = fn(**func_args)
+                            t1 = datetime.now()
+                            record.output = str(tool_output) if tool_output is not None else ""
+                            record.duration_ms = (t1 - t0).total_seconds() * 1000
+                            crewai_event_bus.emit(
+                                self,
+                                event=ToolUsageFinishedEvent(
+                                    output=tool_output,
+                                    tool_name=func_name,
+                                    tool_args=func_args,
+                                    started_at=started_at,
+                                    finished_at=t1,
+                                    from_task=from_task,
+                                    from_agent=from_agent,
+                                ),
+                            )
+                        except Exception as e:
+                            t1 = datetime.now()
+                            record.output = f"Error: {e}"
+                            record.duration_ms = (t1 - t0).total_seconds() * 1000
+                            record.is_error = True
+                            crewai_event_bus.emit(
+                                self,
+                                event=ToolUsageErrorEvent(
+                                    tool_name=func_name,
+                                    tool_args=func_args,
+                                    error=str(e),
+                                    from_task=from_task,
+                                    from_agent=from_agent,
+                                ),
+                            )
+                    else:
+                        record.output = f"Error: unknown function '{func_name}'"
+                        record.is_error = True
+
+                    result.tool_calls.append(record)
+
+                    # Append tool result message for the model
+                    conversation.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": record.output,
+                    })
+            else:
+                # Unexpected return type — treat as final text
+                result.text = str(raw)
+                break
+        else:
+            # max_iterations exhausted — use last text or empty
+            if not result.text and result.tool_calls:
+                result.text = (
+                    f"Max iterations ({max_iterations}) reached. "
+                    f"Last tool: {result.tool_calls[-1].name}"
+                )
+
+        # Estimate cost
+        result.cost_usd = _estimate_cost_usd(
+            self.model,
+            result.usage.prompt_tokens,
+            result.usage.completion_tokens,
+        )
+
+        return result
+
+    def _accumulate_usage(self, result: LLMResult) -> None:
+        """Pull token counts from the internal tracker into the LLMResult."""
+        tracker = getattr(self, "_token_usage", None)
+        if tracker and isinstance(tracker, dict):
+            result.usage.prompt_tokens = tracker.get("prompt_tokens", 0)
+            result.usage.completion_tokens = tracker.get("completion_tokens", 0)
+            result.usage.total_tokens = tracker.get("total_tokens", 0)
+            result.usage.successful_requests += 1
+
+    def _call_single(
+        self,
+        messages: str | list[LLMMessage],
+        tools: list[dict[str, BaseTool]] | None = None,
+        callbacks: list[Any] | None = None,
+        available_functions: dict[str, Any] | None = None,
+        from_task: Task | None = None,
+        from_agent: BaseAgent | None = None,
+        response_model: type[BaseModel] | None = None,
+    ) -> str | Any:
+        """Single-shot LLM call (original call() logic)."""
         with llm_call_context() as call_id:
             crewai_event_bus.emit(
                 self,
@@ -1819,7 +2047,7 @@ class LLM(BaseLLM):
 
                         logging.info("Retrying LLM call without the unsupported 'stop'")
 
-                        return self.call(
+                        return self._call_single(
                             messages,
                             tools=tools,
                             callbacks=callbacks,

@@ -13,6 +13,7 @@ from crewai.crews.crew_output import CrewOutput
 from crewai.flow.flow import Flow
 from crewai.knowledge.knowledge import Knowledge
 from crewai.llm import LLM
+from crewai.llm_result import LLMResult, ToolCallRecord
 from crewai.llms.base_llm import BaseLLM
 from crewai.process import Process
 from crewai.state.checkpoint_config import CheckpointConfig  # noqa: F401
@@ -195,11 +196,13 @@ __all__ = [
     "Flow",
     "Knowledge",
     "LLMGuardrail",
+    "LLMResult",
     "Memory",
     "PlanningConfig",
     "Process",
     "RuntimeState",
     "Task",
     "TaskOutput",
+    "ToolCallRecord",
     "__version__",
 ]
