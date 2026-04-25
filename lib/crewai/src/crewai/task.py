@@ -73,7 +73,7 @@ except ImportError:
         return []
 
 
-from crewai.types.callback import SerializableCallable
+from crewai.types.callback import SerializableCallable, callable_to_string
 from crewai.utilities.guardrail import (
     process_guardrail,
 )
@@ -85,6 +85,36 @@ from crewai.utilities.guardrail_types import (
 from crewai.utilities.i18n import I18N_DEFAULT
 from crewai.utilities.printer import PRINTER
 from crewai.utilities.string_utils import interpolate_only
+
+
+def _serialize_guardrail_item(v: Any) -> str | None:
+    """Serialize a single guardrail value for JSON checkpointing.
+
+    Callables are converted to their dotted-path string via
+    :func:`callable_to_string`.  Strings (LLM guardrail descriptions)
+    are returned as-is.
+    """
+    if v is None:
+        return None
+    if callable(v):
+        return callable_to_string(v)
+    if isinstance(v, str):
+        return v
+    return None
+
+
+def _serialize_guardrail(v: Any) -> str | None:
+    """PlainSerializer for the ``guardrail`` field."""
+    return _serialize_guardrail_item(v)
+
+
+def _serialize_guardrails(v: Any) -> list[str] | str | None:
+    """PlainSerializer for the ``guardrails`` field."""
+    if v is None:
+        return None
+    if isinstance(v, (list, tuple)):
+        return [_serialize_guardrail_item(item) for item in v]
+    return _serialize_guardrail_item(v)
 
 
 def _serialize_model_class(v: type[BaseModel] | None) -> dict[str, Any] | None:
@@ -235,11 +265,19 @@ class Task(BaseModel):
         default=None,
     )
     processed_by_agents: set[str] = Field(default_factory=set)
-    guardrail: GuardrailType | None = Field(
+    guardrail: Annotated[
+        GuardrailType | None,
+        PlainSerializer(_serialize_guardrail, return_type=str | None, when_used="json"),
+    ] = Field(
         default=None,
         description="Function or string description of a guardrail to validate task output before proceeding to next task",
     )
-    guardrails: GuardrailsType | None = Field(
+    guardrails: Annotated[
+        GuardrailsType | None,
+        PlainSerializer(
+            _serialize_guardrails, return_type=list | str | None, when_used="json"
+        ),
+    ] = Field(
         default=None,
         description="List of guardrails to validate task output before proceeding to next task. Also supports a single guardrail function or string description of a guardrail to validate task output before proceeding to next task",
     )

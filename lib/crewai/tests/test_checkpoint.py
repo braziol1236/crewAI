@@ -694,3 +694,150 @@ class TestAgentCheckpoint:
             cfg = CheckpointConfig(restore_from=loc)
             restored = Agent.from_checkpoint(cfg)
             assert restored._kickoff_event_id == "evt-456"
+
+
+# ---------- Guardrail serialization (issue #5620) ----------
+
+
+def _sample_guardrail(output):
+    """Module-level guardrail function used in serialization tests."""
+    return (True, output)
+
+
+def _another_guardrail(output):
+    """A second module-level guardrail for multi-guardrail tests."""
+    return (True, output)
+
+
+class TestGuardrailCheckpointSerialization:
+    """Regression tests for checkpoint serialization of guardrail functions.
+
+    Issue #5620: ``model_dump(mode="json")`` raised
+    ``PydanticSerializationError: Unable to serialize unknown type: <class 'function'>``
+    when a Task carried callable guardrails.
+    """
+
+    def test_task_with_callable_guardrail_serializes(self) -> None:
+        """A Task with a single callable guardrail must serialize to JSON."""
+        task = Task(
+            description="d",
+            expected_output="e",
+            guardrail=_sample_guardrail,
+        )
+        dumped = task.model_dump(mode="json")
+        # The callable should be serialized as a dotted-path string
+        assert isinstance(dumped["guardrail"], str)
+        assert "_sample_guardrail" in dumped["guardrail"]
+
+    def test_task_with_callable_guardrails_list_serializes(self) -> None:
+        """A Task with a list of callable guardrails must serialize to JSON."""
+        task = Task(
+            description="d",
+            expected_output="e",
+            guardrails=[_sample_guardrail, _another_guardrail],
+        )
+        dumped = task.model_dump(mode="json")
+        assert isinstance(dumped["guardrails"], list)
+        assert len(dumped["guardrails"]) == 2
+        assert all(isinstance(g, str) for g in dumped["guardrails"])
+        assert "_sample_guardrail" in dumped["guardrails"][0]
+        assert "_another_guardrail" in dumped["guardrails"][1]
+
+    def test_task_with_string_guardrail_serializes(self) -> None:
+        """A Task with a string guardrail must still serialize correctly.
+        Note: string guardrails on the ``guardrail`` field require an agent
+        with an LLM, so we supply a minimal agent."""
+        agent = Agent(role="r", goal="g", backstory="b", llm="gpt-4o-mini")
+        task = Task(
+            description="d",
+            expected_output="e",
+            agent=agent,
+            guardrail="Ensure output is valid JSON",
+        )
+        dumped = task.model_dump(mode="json")
+        # String guardrails are converted to LLMGuardrail by the validator;
+        # the field is cleared in favour of _guardrail
+        # but we can still check the JSON round-trip doesn't crash
+        assert isinstance(dumped, dict)
+
+    def test_task_with_mixed_guardrails_serializes(self) -> None:
+        """A Task with a mix of callable and string guardrails must serialize."""
+        agent = Agent(role="r", goal="g", backstory="b", llm="gpt-4o-mini")
+        task = Task(
+            description="d",
+            expected_output="e",
+            agent=agent,
+            guardrails=[_sample_guardrail, "Ensure output is valid"],
+        )
+        dumped = task.model_dump(mode="json")
+        # The guardrails list may be processed by the validator; just ensure
+        # serialization succeeds without PydanticSerializationError
+        assert isinstance(dumped, dict)
+
+    def test_task_with_none_guardrails_serializes(self) -> None:
+        """A Task with no guardrails must serialize with None values."""
+        task = Task(description="d", expected_output="e")
+        dumped = task.model_dump(mode="json")
+        assert dumped["guardrail"] is None
+        assert dumped["guardrails"] is None
+
+    def test_crew_with_guardrail_task_serializes_for_checkpoint(self) -> None:
+        """A Crew containing tasks with callable guardrails must serialize
+        through RuntimeState.model_dump (the checkpoint code path)."""
+        agent = Agent(role="r", goal="g", backstory="b", llm="gpt-4o-mini")
+        task = Task(
+            description="d",
+            expected_output="e",
+            agent=agent,
+            guardrails=[_sample_guardrail],
+        )
+        crew = Crew(agents=[agent], tasks=[task], verbose=False)
+        state = RuntimeState(root=[crew])
+
+        from crewai.state.runtime import _prepare_entities
+
+        _prepare_entities(state.root)
+        # This is the exact call that raised PydanticSerializationError
+        # before the fix for issue #5620
+        payload = state.model_dump(mode="json")
+        assert "entities" in payload
+
+    def test_crew_with_guardrail_task_checkpoints_to_json(self) -> None:
+        """End-to-end: a Crew with guardrail tasks checkpoints to disk."""
+        agent = Agent(role="r", goal="g", backstory="b", llm="gpt-4o-mini")
+        task = Task(
+            description="d",
+            expected_output="e",
+            agent=agent,
+            guardrails=[_sample_guardrail],
+        )
+        crew = Crew(agents=[agent], tasks=[task], verbose=False)
+        state = RuntimeState(root=[crew])
+        state._provider = JsonProvider()
+        with tempfile.TemporaryDirectory() as d:
+            loc = state.checkpoint(d)
+            # Verify the checkpoint file was written and is valid JSON
+            with open(loc) as f:
+                data = json.load(f)
+            assert "entities" in data
+
+    def test_flow_with_guardrail_crew_serializes(self) -> None:
+        """A Flow whose state is fully serializable must not fail
+        when the RuntimeState also includes a Crew with callable guardrails."""
+        agent = Agent(role="r", goal="g", backstory="b", llm="gpt-4o-mini")
+        task = Task(
+            description="d",
+            expected_output="e",
+            agent=agent,
+            guardrail=_sample_guardrail,
+        )
+        crew = Crew(agents=[agent], tasks=[task], verbose=False)
+        flow = Flow(checkpoint=True)
+        state = RuntimeState(root=[crew, flow])
+
+        from crewai.state.runtime import _prepare_entities
+
+        _prepare_entities(state.root)
+        payload = state.model_dump(mode="json")
+        assert "entities" in payload
+        assert len(payload["entities"]) == 2
