@@ -108,7 +108,7 @@ def _serialize_guardrail(v: Any) -> str | None:
     return _serialize_guardrail_item(v)
 
 
-def _serialize_guardrails(v: Any) -> list[str] | str | None:
+def _serialize_guardrails(v: Any) -> list[str | None] | str | None:
     """PlainSerializer for the ``guardrails`` field."""
     if v is None:
         return None
