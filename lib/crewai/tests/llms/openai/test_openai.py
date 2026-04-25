@@ -2100,3 +2100,134 @@ def test_openai_no_detail_fields_omitted():
     assert usage["completion_tokens"] == 30
     assert "cached_prompt_tokens" not in usage
     assert "reasoning_tokens" not in usage
+
+
+class TestOpenAIApiKeyHandling:
+    """Tests for API key handling, whitespace stripping, and authentication error messages.
+
+    Covers the scenario from issue #5622 where OPENAI_API_KEY works locally
+    but fails inside CrewAI due to whitespace or propagation issues.
+    """
+
+    def test_api_key_whitespace_stripped_from_env(self):
+        """Test that whitespace in OPENAI_API_KEY env var is stripped during normalization."""
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "  sk-test-key-123  "}, clear=False):
+            llm = LLM(model="openai/gpt-4o")
+            assert llm.api_key == "sk-test-key-123"
+
+    def test_api_key_newline_stripped_from_env(self):
+        """Test that newlines in OPENAI_API_KEY env var are stripped."""
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key-123\n"}, clear=False):
+            llm = LLM(model="openai/gpt-4o")
+            assert llm.api_key == "sk-test-key-123"
+
+    def test_api_key_tabs_stripped_from_env(self):
+        """Test that tab characters in OPENAI_API_KEY env var are stripped."""
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "\tsk-test-key-123\t"}, clear=False):
+            llm = LLM(model="openai/gpt-4o")
+            assert llm.api_key == "sk-test-key-123"
+
+    def test_api_key_passed_directly_whitespace_stripped(self):
+        """Test that whitespace in directly-passed api_key is stripped."""
+        llm = LLM(model="openai/gpt-4o", api_key="  sk-direct-key  ")
+        assert llm.api_key == "sk-direct-key"
+
+    def test_api_key_no_whitespace_unchanged(self):
+        """Test that a clean API key is not modified."""
+        llm = LLM(model="openai/gpt-4o", api_key="sk-clean-key")
+        assert llm.api_key == "sk-clean-key"
+
+    def test_api_key_whitespace_stripped_in_get_client_params(self):
+        """Test that _get_client_params strips whitespace when reading from env at call time."""
+        llm = LLM(model="openai/gpt-4o", api_key="sk-test")
+        # Simulate api_key being None to trigger env var read in _get_client_params
+        llm.api_key = None
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "  sk-env-key  "}, clear=False):
+            params = llm._get_client_params()
+            assert params["api_key"] == "sk-env-key"
+
+    def test_api_key_missing_raises_value_error(self):
+        """Test that missing OPENAI_API_KEY raises ValueError with clear message."""
+        llm = LLM(model="openai/gpt-4o", api_key="sk-test")
+        llm.api_key = None
+        with patch.dict(os.environ, {}, clear=True):
+            with pytest.raises(ValueError, match="OPENAI_API_KEY is required"):
+                llm._get_client_params()
+
+    def test_authentication_error_provides_troubleshooting_guidance(self):
+        """Test that AuthenticationError is caught and re-raised with helpful guidance."""
+        from openai import AuthenticationError
+        import httpx
+
+        llm = LLM(model="openai/gpt-4o", api_key="sk-invalid-key")
+
+        mock_response = httpx.Response(
+            status_code=401,
+            request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"),
+            json={"error": {"message": "Incorrect API key provided", "type": "invalid_api_key"}},
+        )
+        auth_error = AuthenticationError(
+            message="Incorrect API key provided",
+            response=mock_response,
+            body={"error": {"message": "Incorrect API key provided"}},
+        )
+
+        with patch.object(llm, "_get_sync_client") as mock_client:
+            mock_client.return_value.chat.completions.create.side_effect = auth_error
+            with pytest.raises(AuthenticationError) as exc_info:
+                llm.call(messages=[{"role": "user", "content": "Hello"}])
+
+            error_str = str(exc_info.value)
+            assert "Incorrect API key" in error_str
+
+    def test_authentication_error_logged_with_troubleshooting(self):
+        """Test that AuthenticationError logs the troubleshooting message."""
+        from openai import AuthenticationError
+        import httpx
+
+        llm = LLM(model="openai/gpt-4o", api_key="sk-invalid-key")
+
+        mock_response = httpx.Response(
+            status_code=401,
+            request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"),
+            json={"error": {"message": "Incorrect API key provided", "type": "invalid_api_key"}},
+        )
+        auth_error = AuthenticationError(
+            message="Incorrect API key provided",
+            response=mock_response,
+            body={"error": {"message": "Incorrect API key provided"}},
+        )
+
+        with patch.object(llm, "_get_sync_client") as mock_client:
+            mock_client.return_value.chat.completions.create.side_effect = auth_error
+            with patch("crewai.llms.providers.openai.completion.logging") as mock_logging:
+                with pytest.raises(AuthenticationError):
+                    llm.call(messages=[{"role": "user", "content": "Hello"}])
+
+                logged_msg = mock_logging.error.call_args[0][0]
+                assert "Troubleshooting steps" in logged_msg
+                assert "OPENAI_API_KEY" in logged_msg
+                assert ".env" in logged_msg
+
+    def test_format_auth_error_message_content(self):
+        """Test _format_auth_error returns a message with troubleshooting guidance."""
+        from openai import AuthenticationError
+        import httpx
+
+        mock_response = httpx.Response(
+            status_code=401,
+            request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"),
+            json={"error": {"message": "Invalid key", "type": "invalid_api_key"}},
+        )
+        auth_error = AuthenticationError(
+            message="Invalid key",
+            response=mock_response,
+            body={"error": {"message": "Invalid key"}},
+        )
+
+        msg = OpenAICompletion._format_auth_error(auth_error)
+        assert "Authentication failed for OpenAI API" in msg
+        assert "OPENAI_API_KEY" in msg
+        assert "whitespace" in msg
+        assert "platform.openai.com/api-keys" in msg
+        assert ".env" in msg

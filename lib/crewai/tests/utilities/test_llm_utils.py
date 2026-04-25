@@ -138,3 +138,24 @@ def test_create_llm_anthropic_missing_dependency() -> None:
                 create_llm(llm_value="anthropic/claude-3-sonnet")
 
             assert "Anthropic native provider not available, to install: uv add \"crewai[anthropic]\"" in str(exc_info.value)
+
+
+def test_env_var_api_key_whitespace_stripped() -> None:
+    """Test that API keys read from environment variables have whitespace stripped.
+
+    Covers issue #5622 where whitespace in env vars causes auth failures.
+    """
+    with patch.dict(os.environ, {"OPENAI_API_KEY": "  sk-test-key  "}, clear=True):
+        llm = create_llm(llm_value=None)
+        assert llm is not None
+        assert isinstance(llm, BaseLLM)
+        assert llm.api_key == "sk-test-key"
+
+
+def test_env_var_api_key_newline_stripped() -> None:
+    """Test that newlines in API keys from environment are stripped."""
+    with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key\n"}, clear=True):
+        llm = create_llm(llm_value=None)
+        assert llm is not None
+        assert isinstance(llm, BaseLLM)
+        assert llm.api_key == "sk-test-key"

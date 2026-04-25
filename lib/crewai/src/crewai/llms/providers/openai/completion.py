@@ -8,7 +8,14 @@ import os
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict
 
 import httpx
-from openai import APIConnectionError, AsyncOpenAI, NotFoundError, OpenAI, Stream
+from openai import (
+    APIConnectionError,
+    AsyncOpenAI,
+    AuthenticationError,
+    NotFoundError,
+    OpenAI,
+    Stream,
+)
 from openai.lib.streaming.chat import ChatCompletionStream
 from openai.types.chat import (
     ChatCompletion,
@@ -246,7 +253,8 @@ class OpenAICompletion(BaseLLM):
             return data
         if not data.get("provider"):
             data["provider"] = "openai"
-        data["api_key"] = data.get("api_key") or os.getenv("OPENAI_API_KEY")
+        raw_key = data.get("api_key") or os.getenv("OPENAI_API_KEY")
+        data["api_key"] = raw_key.strip() if isinstance(raw_key, str) else raw_key
         # Extract api_base from kwargs if present
         if "api_base" not in data:
             data["api_base"] = None
@@ -363,7 +371,8 @@ class OpenAICompletion(BaseLLM):
         """Get OpenAI client parameters."""
 
         if self.api_key is None:
-            self.api_key = os.getenv("OPENAI_API_KEY")
+            raw_key = os.getenv("OPENAI_API_KEY")
+            self.api_key = raw_key.strip() if isinstance(raw_key, str) else raw_key
             if self.api_key is None:
                 raise ValueError("OPENAI_API_KEY is required")
 
@@ -387,6 +396,18 @@ class OpenAICompletion(BaseLLM):
             client_params.update(self.client_params)
 
         return client_params
+
+    @staticmethod
+    def _format_auth_error(e: AuthenticationError) -> str:
+        """Format an authentication error with troubleshooting guidance."""
+        return (
+            f"Authentication failed for OpenAI API: {e}\n"
+            "Troubleshooting steps:\n"
+            "  1. Verify OPENAI_API_KEY is set correctly in your environment or .env file\n"
+            "  2. Ensure the key has no extra whitespace or quotes\n"
+            "  3. Confirm the key is still active at https://platform.openai.com/api-keys\n"
+            "  4. If using a .env file, ensure it is in your project root and contains the correct key"
+        )
 
     def call(
         self,
@@ -449,6 +470,8 @@ class OpenAICompletion(BaseLLM):
                     response_model=response_model,
                 )
 
+            except AuthenticationError:
+                raise
             except Exception as e:
                 error_msg = f"OpenAI API call failed: {e!s}"
                 logging.error(error_msg)
@@ -544,6 +567,8 @@ class OpenAICompletion(BaseLLM):
                     response_model=response_model,
                 )
 
+            except AuthenticationError:
+                raise
             except Exception as e:
                 error_msg = f"OpenAI API call failed: {e!s}"
                 logging.error(error_msg)
@@ -915,6 +940,13 @@ class OpenAICompletion(BaseLLM):
                 params.get("input", []), content, from_agent
             )
 
+        except AuthenticationError as e:
+            error_msg = self._format_auth_error(e)
+            logging.error(error_msg)
+            self._emit_call_failed_event(
+                error=error_msg, from_task=from_task, from_agent=from_agent
+            )
+            raise
         except NotFoundError as e:
             error_msg = f"Model {self.model} not found: {e}"
             logging.error(error_msg)
@@ -1049,6 +1081,13 @@ class OpenAICompletion(BaseLLM):
                 usage=usage,
             )
 
+        except AuthenticationError as e:
+            error_msg = self._format_auth_error(e)
+            logging.error(error_msg)
+            self._emit_call_failed_event(
+                error=error_msg, from_task=from_task, from_agent=from_agent
+            )
+            raise
         except NotFoundError as e:
             error_msg = f"Model {self.model} not found: {e}"
             logging.error(error_msg)
@@ -1717,6 +1756,13 @@ class OpenAICompletion(BaseLLM):
             content = self._invoke_after_llm_call_hooks(
                 params["messages"], content, from_agent
             )
+        except AuthenticationError as e:
+            error_msg = self._format_auth_error(e)
+            logging.error(error_msg)
+            self._emit_call_failed_event(
+                error=error_msg, from_task=from_task, from_agent=from_agent
+            )
+            raise
         except NotFoundError as e:
             error_msg = f"Model {self.model} not found: {e}"
             logging.error(error_msg)
@@ -2106,6 +2152,13 @@ class OpenAICompletion(BaseLLM):
 
             if usage.get("total_tokens", 0) > 0:
                 logging.info(f"OpenAI API usage: {usage}")
+        except AuthenticationError as e:
+            error_msg = self._format_auth_error(e)
+            logging.error(error_msg)
+            self._emit_call_failed_event(
+                error=error_msg, from_task=from_task, from_agent=from_agent
+            )
+            raise
         except NotFoundError as e:
             error_msg = f"Model {self.model} not found: {e}"
             logging.error(error_msg)
