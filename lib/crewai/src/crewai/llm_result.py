@@ -7,6 +7,8 @@ calls without tools still return str.
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from crewai.types.usage_metrics import UsageMetrics
