@@ -68,8 +68,8 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 env_files = [".env.test"]
 # removed --cov-report=xml since I'm not using CI here, terminal output is enough
-# also added -x so tests stop on first failure — saves time when iterating
-addopts = "--cov=src/crewai --cov-report=term-missing -x"
+# dropped -x so I can see all failures at once instead of stopping on the first one
+addopts = "--cov=src/crewai --cov-report=term-missing"
 
 [tool.coverage.run]
 source = ["src/crewai"]
